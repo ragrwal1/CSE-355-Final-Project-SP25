@@ -1,16 +1,15 @@
 import random
+import re
 
 def generate_balanced_regex(alphabet, min_length, max_length):
     """
     Generate a balanced regex string using the given alphabet.
-    The regex will contain:
-      - Literals (characters from 'alphabet')
-      - Kleene stars (*)
-      - Unions (|)
-      - Concatenations
-      - Some grouping, but minimal deep nesting.
-
-    The final regex string will have a length between min_length and max_length.
+    
+    Additional constraints:
+      - Rejects regexes with 4 or more consecutive literals.
+      - Must contain at least one Kleene star (*).
+      - Must not contain "(((" or ")))".
+      - Must not have more than two '|' operators.
     
     Parameters:
       alphabet (str): A string containing characters from the allowed alphabet.
@@ -18,7 +17,7 @@ def generate_balanced_regex(alphabet, min_length, max_length):
       max_length (int): Maximum length of the generated regex.
     
     Returns:
-      str: A randomly generated regex string.
+      str: A randomly generated regex string meeting the criteria.
     """
     if min_length > max_length:
         raise ValueError("min_length must be less than or equal to max_length")
@@ -47,18 +46,33 @@ def generate_balanced_regex(alphabet, min_length, max_length):
             # 10% chance: Concatenation of two subexpressions.
             return gen_regex(depth + 1) + gen_regex(depth + 1)
 
-    # Try generating candidates until one fits the length criteria.
+    def is_valid(regex):
+        """Check if the generated regex meets the required constraints."""
+        if not regex:
+            return False
+        if len(regex) < min_length or len(regex) > max_length:
+            return False
+        if regex.count('*') < 1:  # Must have at least one Kleene star
+            return False
+        if regex.count('|') > 2:  # Cannot have more than two '|'
+            return False
+        if "(((" in regex or ")))" in regex:  # Cannot have triple parentheses
+            return False
+        if re.search(r"[a-zA-Z]{4,}", regex):  # No 4+ consecutive literals
+            return False
+        return True
+
+    # Try generating candidates until one fits the constraints.
     for _ in range(1000):
         candidate = gen_regex(0)
-        if min_length <= len(candidate) <= max_length:
+        if is_valid(candidate):
             return candidate
 
-    # Fallback: Adjust candidate to satisfy the constraints.
+    # If no valid candidate is found, adjust one manually.
     candidate = gen_regex(0)
-    if len(candidate) > max_length:
-        candidate = candidate[:max_length]
-    while len(candidate) < min_length:
-        candidate += random.choice(alphabet)
+    while not is_valid(candidate):
+        candidate = gen_regex(0)
+
     return candidate
 
 # Example usage:
@@ -66,7 +80,6 @@ if __name__ == "__main__":
     alphabet = "abcde"  # Example alphabet
     min_len = 15
     max_len = 20
-
 
     regex_string = generate_balanced_regex(alphabet, min_len, max_len)
     print(regex_string)
