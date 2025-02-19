@@ -50,36 +50,24 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, 36)
     
-    # Define an example DFA.
-    # Four fields:
+    # Define the second example DFA.
+    # Fields:
     # - "start_state": the starting state.
     # - "accept_states": list of one or more accept states.
     # - "dead_states": list of states with no exits.
     # - "transitions": the state transition dictionary.
     dfa = {
         "start_state": 0,
-        "accept_states": [1, 2],
-        "dead_states": [3],
+        "accept_states": [0, 2, 3, 4],
+        "dead_states": [1],
         "transitions": {
-            0: {'A': 1, 'B': 2, '0': 3},
-            1: {'A': 1, 'B': 3},
-            2: {'A': 3, 'B': 2},
-            3: {}  # Dead state (no transitions)
+            0: {'a': 1, 'b': 2, 'c': 3, 'd': 1},
+            1: {},
+            2: {'a': 1, 'b': 2, 'c': 1, 'd': 1},
+            3: {'a': 1, 'b': 1, 'c': 1, 'd': 4},
+            4: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
         }
     }
-    
-    dfa = {
-    "start_state": 0,
-    "accept_states": [0, 2, 3, 4],
-    "dead_states": [1],
-    "transitions": {
-        0: {'a': 1, 'b': 2, 'c': 3, 'd': 1},
-        1: {},
-        2: {'a': 1, 'b': 2, 'c': 1, 'd': 1},
-        3: {'a': 1, 'b': 1, 'c': 1, 'd': 4},
-        4: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
-    }
-}
     
     state_radius = 30
     states = list(dfa["transitions"].keys())
@@ -99,16 +87,29 @@ def main():
                     input_text = input_text[:-1]
                     current_state = dfa["start_state"]
                     for c in input_text:
-                        if c in dfa["transitions"][current_state]:
-                            current_state = dfa["transitions"][current_state][c]
-                        else:
-                            break
+                        transitions = dfa["transitions"][current_state]
+                        matched = None
+                        # Do a case-insensitive match.
+                        for key in transitions:
+                            if key.lower() == c.lower():
+                                matched = key
+                                break
+                        if matched is not None:
+                            current_state = transitions[matched]
                 else:
-                    char = event.unicode.upper()
+                    char = event.unicode  # Keep the character's original case.
+                    # Allow letters (both cases) and numbers.
                     if char in "01ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
                         input_text += char
-                        if char in dfa["transitions"][current_state]:
-                            current_state = dfa["transitions"][current_state][char]
+                        transitions = dfa["transitions"][current_state]
+                        matched = None
+                        # Find a transition that matches the input character case-insensitively.
+                        for key in transitions:
+                            if key.lower() == char.lower():
+                                matched = key
+                                break
+                        if matched is not None:
+                            current_state = transitions[matched]
 
         screen.fill((255, 255, 255))  # White background
 
