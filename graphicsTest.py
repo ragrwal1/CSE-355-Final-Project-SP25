@@ -9,14 +9,14 @@ def calculate_positions(states, start_state, screen_width, screen_height):
     with the entire DFA being center justified."""
     center_x, center_y = screen_width // 2, screen_height // 2
     radius = min(screen_width, screen_height) // 3
-    
+
     # Reorder states so that the start state comes first.
     if start_state in states:
         idx = states.index(start_state)
         ordered_states = states[idx:] + states[:idx]
     else:
         ordered_states = states
-    
+
     positions = {}
     num_states = len(ordered_states)
     for i, state in enumerate(ordered_states):
@@ -34,14 +34,63 @@ def draw_arrow(surface, start, end, color, arrow_width=2):
     angle = math.atan2(dy, dx)
     arrow_length = 10
     arrow_angle = math.pi / 6  # 30 degrees
-    
+
     x1 = end[0] - arrow_length * math.cos(angle - arrow_angle)
     y1 = end[1] - arrow_length * math.sin(angle - arrow_angle)
     x2 = end[0] - arrow_length * math.cos(angle + arrow_angle)
     y2 = end[1] - arrow_length * math.sin(angle + arrow_angle)
-    
+
     pygame.draw.line(surface, color, end, (x1, y1), arrow_width)
     pygame.draw.line(surface, color, end, (x2, y2), arrow_width)
+
+def draw_self_loop(surface, pos, state_radius, color, arrow_width=2):
+    """
+    Draw a half-circle arc above the given state (pos),
+    and place an arrow at the left end of that arc.
+    """
+    x, y = pos
+    loop_radius = 20  # How large the self-loop arc should be
+
+    # The bounding rect for the arc is centered horizontally on the state,
+    # but moved up so the arc is above the state circle.
+    # The top of the bounding box is at (y - state_radius - 2*loop_radius)
+    # because we want enough space above the state to see the arc clearly.
+    bounding_rect = pygame.Rect(
+        x - loop_radius,
+        y - state_radius - 2 * loop_radius,
+        2 * loop_radius,
+        2 * loop_radius
+    )
+
+    # Draw a half-circle from 0 to π (0 to 180 degrees).
+    # In pygame's arc coordinates, 0 radians is to the right, and angles increase counter-clockwise.
+    start_angle = 0
+    end_angle = math.pi
+    pygame.draw.arc(surface, color, bounding_rect, start_angle, end_angle, arrow_width)
+
+    #
+    # Draw the arrowhead at the end of the arc (i.e., the left side at angle = π).
+    #
+    arrow_angle = math.pi  # leftmost point on the arc
+    arrow_x = x - loop_radius
+    # The arc is centered at y - state_radius - loop_radius vertically
+    arrow_y = (y - state_radius - 2 * loop_radius) + loop_radius
+
+    # For a circle, a tangent at angle θ is θ + π/2. 
+    # So if the arc ends at angle π, its tangent is π + π/2 = 3π/2 (straight down).
+    tangent_angle = arrow_angle + math.pi / 2
+
+    arrow_len = 10
+    arrow_opening = math.pi / 6  # 30° on each side
+
+    x1 = arrow_x - arrow_len * math.cos(tangent_angle - arrow_opening)
+    y1 = arrow_y - arrow_len * math.sin(tangent_angle - arrow_opening)
+    x2 = arrow_x - arrow_len * math.cos(tangent_angle + arrow_opening)
+    y2 = arrow_y - arrow_len * math.sin(tangent_angle + arrow_opening)
+
+    # Draw the two arrowhead lines.
+    pygame.draw.line(surface, color, (arrow_x, arrow_y), (x1, y1), arrow_width)
+    pygame.draw.line(surface, color, (arrow_x, arrow_y), (x2, y2), arrow_width)
 
 def generate_dfa(alphabet, min_length, max_length):
     """
@@ -49,9 +98,7 @@ def generate_dfa(alphabet, min_length, max_length):
     Returns a DFA with an extra field 'regex'.
     For simplicity, we return a static DFA whose transitions use the first two letters of the alphabet.
     """
-     # Use only the first two 
-
-
+    # Use only the first two letters of a dummy alphabet.
     alphabet = "abcde"  # Example alphabet
     min_length = 15
     max_length = 20
@@ -68,50 +115,17 @@ def main():
     font = pygame.font.Font(None, 36)
     
     # --- Initial DFA definition ---
-    # (This DFA does not include a regex field yet.)
     dfa = {
-        "start_state": 0,
-        "accept_states": [1, 5],
-        "dead_states": [2],
+        "start_state": 3,
+        "accept_states": [0],
         "transitions": {
-            0: {'a': 1, 'b': 2, 'c': 3, 'd': 4},
-            1: {'a': 1, 'b': 2, 'c': 2, 'd': 2},
-            2: {},
-            3: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
-            4: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
-            5: {'a': 2, 'b': 2, 'c': 2, 'd': 2},
+            0: {'a': 1, 'b': 1, 'c': 0, 'd': 1},
+            1: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
+            2: {'a': 1, 'b': 1, 'c': 0, 'd': 1},
+            3: {'a': 0, 'b': 1, 'c': 2, 'd': 1},
         },
-        "regex": "(a*|(c|d))(e|a)"
+        "regex": "(cc|a)c*"
     }
-
-    dfa = {
-    "start_state": 0,
-    "accept_states": [4, 5],
-    "dead_states": [1],
-    "transitions": {
-        0: {'a': 1, 'b': 1, 'c': 2, 'd': 1},
-        1: {},
-        2: {'a': 3, 'b': 4, 'c': 1, 'd': 5},
-        3: {'a': 3, 'b': 4, 'c': 1, 'd': 5},
-        4: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
-        5: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
-    },
-    "regex": "ca*(d|b)"
-}
-    
-    dfa = {
-    "start_state": 3,
-    "accept_states": [0],
-    
-    "transitions": {
-        0: {'a': 1, 'b': 1, 'c': 0, 'd': 1},
-        1: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
-        2: {'a': 1, 'b': 1, 'c': 0, 'd': 1},
-        3: {'a': 0, 'b': 1, 'c': 2, 'd': 1},
-    },
-    "regex": "(cc|a)c*"
-}
-
     
     state_radius = 30
     states = list(dfa["transitions"].keys())
@@ -163,8 +177,6 @@ def main():
             # Check for mouse clicks to handle the reload button.
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if reload_button_rect.collidepoint(event.pos):
-                    # Call our dummy function. For this example we use:
-                    #   alphabet: "abcd", min length: 1, and max length: 5.
                     dfa = generate_dfa("abcd", 1, 5)
                     # Recalculate states and positions from the new DFA.
                     states = list(dfa["transitions"].keys())
@@ -174,20 +186,24 @@ def main():
                     
         screen.fill((255, 255, 255))  # White background
 
-        # Draw the DFA transitions as arrows.
+        # Draw the DFA transitions as arrows or self loops.
         arrow_color = (0, 0, 0)
         for state, transitions in dfa["transitions"].items():
             for symbol, target in transitions.items():
-                start = positions[state]
-                end = positions[target]
-                dx, dy = end[0] - start[0], end[1] - start[1]
-                dist = math.hypot(dx, dy)
-                if dist == 0:
-                    dist = 1
-                ux, uy = dx / dist, dy / dist
-                start_pos = (start[0] + ux * state_radius, start[1] + uy * state_radius)
-                end_pos = (end[0] - ux * state_radius, end[1] - uy * state_radius)
-                draw_arrow(screen, start_pos, end_pos, arrow_color)
+                # Check if the transition is a self loop.
+                if state == target:
+                    draw_self_loop(screen, positions[state], state_radius, arrow_color)
+                else:
+                    start = positions[state]
+                    end = positions[target]
+                    dx, dy = end[0] - start[0], end[1] - start[1]
+                    dist = math.hypot(dx, dy)
+                    if dist == 0:
+                        dist = 1
+                    ux, uy = dx / dist, dy / dist
+                    start_pos = (start[0] + ux * state_radius, start[1] + uy * state_radius)
+                    end_pos = (end[0] - ux * state_radius, end[1] - uy * state_radius)
+                    draw_arrow(screen, start_pos, end_pos, arrow_color)
 
         # Draw state circles with labels.
         for state, pos in positions.items():
@@ -198,9 +214,9 @@ def main():
         # Highlight the current state with a distinct visual cue.
         if current_state == dfa["start_state"]:
             marker_color = (255, 165, 0)  # Orange for the start state.
-        elif current_state in dfa["accept_states"]:
+        elif "accept_states" in dfa and current_state in dfa["accept_states"]:
             marker_color = (0, 255, 0)    # Green for accept states.
-        elif current_state in dfa["dead_states"]:
+        elif "dead_states" in dfa and current_state in dfa["dead_states"]:
             marker_color = (128, 128, 128)  # Gray for dead states.
         else:
             marker_color = (255, 0, 0)    # Red for a normal state.

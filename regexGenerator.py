@@ -4,10 +4,13 @@ Module: regex_module.py
 
 This module provides functionality for generating regular expressions (regexes)
 using optimized weighted probabilities. An orchestrator can supply a configuration
-dictionary (containing keys such as 'alphabet', 'min_length', 'max_length', etc.). 
+dictionary (containing keys such as 'alphabet', 'min_length', 'max_length',
+'num_optimizations', etc.). 
 
 The orchestrator workflow is as follows:
-  1. Call optimize_weights(config, trials, tolerance) to obtain the optimal weights.
+  1. Call optimize_weights_from_config(config) to obtain the optimal weights.
+     If config contains 'num_optimizations' > 1, multiple optimization runs will
+     be performed and the weights averaged.
   2. Use generate_regex(config, weights) (or generate_regexes) to generate one or more
      valid regex strings based on the provided configuration and optimized weights.
 
@@ -232,15 +235,75 @@ def optimize_literal_weight(params, low=0.1, high=0.9, tolerance=0.01, delta=0.0
     print(f"\nOptimization completed in {total_time:.2f} seconds. Optimal literal weight: {optimal_x:.4f}")
     return optimal_x
 
-def optimize_weights(config: dict, trials=1000, tolerance=0.001) -> dict:
+# -----------------------------------------------------------------------------
+# Optimization from Config (with num_optimizations)
+# -----------------------------------------------------------------------------
+
+def optimize_weights_from_config(config: dict) -> dict:
     """
-    Given a configuration dictionary, optimize the literal probability and return the
-    corresponding weights for regex components.
+    Given a configuration dictionary, optimize the literal probability and return
+    the corresponding weights for regex components.
+
+    If 'num_optimizations' is provided in the config and is greater than 1,
+    multiple optimization runs are performed and the weights are averaged.
+    Optionally, a plot and sample regexes can be generated.
     """
     params = RegexParams(config['alphabet'], config['min_length'], config['max_length'])
-    with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-        optimal_literal = optimize_literal_weight(params, tolerance=tolerance, trials=trials, executor=executor)
-    return get_weights(optimal_literal)
+    trials = config.get('trials', 1000)
+    precision = config.get('precision', 0.001)
+    num_optimizations = config.get('num_optimizations', 1)
+    show_plot = config.get('show_plot', False)
+    num_samples = config.get('num_samples', 15)
+    
+    if num_optimizations <= 1:
+        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+            optimal_literal = optimize_literal_weight(params, tolerance=precision, trials=trials, executor=executor)
+        weights = get_weights(optimal_literal)
+    else:
+        literal_weights = []
+        star_weights = []
+        union_weights = []
+        concat_weights = []
+        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+            for _ in tqdm(range(num_optimizations), desc="Running optimizations"):
+                optimal_literal = optimize_literal_weight(params, tolerance=precision, trials=trials, executor=executor)
+                optimal_weights = get_weights(optimal_literal)
+                literal_weights.append(optimal_weights['literal'])
+                star_weights.append(optimal_weights['star'])
+                union_weights.append(optimal_weights['union'])
+                concat_weights.append(optimal_weights['concat'])
+        avg_literal = sum(literal_weights) / len(literal_weights)
+        avg_star = sum(star_weights) / len(star_weights)
+        avg_union = sum(union_weights) / len(union_weights)
+        avg_concat = sum(concat_weights) / len(concat_weights)
+        weights = {
+            'literal': avg_literal,
+            'star': avg_star,
+            'union': avg_union,
+            'concat': avg_concat
+        }
+        if show_plot:
+            runs = np.arange(1, num_optimizations + 1)
+            rolling_literal = np.cumsum(literal_weights) / runs
+            rolling_star = np.cumsum(star_weights) / runs
+            rolling_union = np.cumsum(union_weights) / runs
+            rolling_concat = np.cumsum(concat_weights) / runs
+
+            plt.figure(figsize=(10, 6))
+            plt.plot(runs, rolling_literal, label='Literal Rolling Avg')
+            plt.plot(runs, rolling_star, label='Star Rolling Avg')
+            plt.plot(runs, rolling_union, label='Union Rolling Avg')
+            plt.plot(runs, rolling_concat, label='Concat Rolling Avg')
+            plt.xlabel('Optimization Run')
+            plt.ylabel('Rolling Average Weight')
+            plt.title(f'Rolling Average of Weights Over {num_optimizations} Runs')
+            plt.legend()
+            plt.show()
+        
+        # Optionally generate sample regexes:
+        generate_sample_regexes(params, weights, num_samples=num_samples)
+        
+    return weights
 
 # -----------------------------------------------------------------------------
 # Orchestrator Interface Functions
@@ -255,12 +318,33 @@ def generate_regex(config: dict, weights: dict) -> str:
         regex = generate_balanced_regex_with_weights(params, weights)
         if is_valid(regex, params):
             return regex
-
+        
 def generate_regexes(config: dict, weights: dict, count=1):
     """
     Generate multiple valid regex strings.
     """
     return [generate_regex(config, weights) for _ in range(count)]
+
+
+def generate_sample_regexes(params, weights, num_samples=15):
+    """
+    Generate and print sample regexes that pass the validation check.
+    """
+    print("\nGenerated Sample Regexes:\n")
+    count = 0
+    skips = 0
+    while count < num_samples:
+        regex = generate_balanced_regex_with_weights(params, weights)
+        if is_valid(regex, params):
+            print(regex)
+            count += 1
+        else:
+            skips += 1
+
+        if skips == 1000:
+            print("1000 skips reached")
+            break
+    print(f"\nTotal skips: {skips}")
 
 # -----------------------------------------------------------------------------
 # Main Execution (Example usage as a standalone script)
@@ -268,16 +352,19 @@ def generate_regexes(config: dict, weights: dict, count=1):
 
 if __name__ == "__main__":
     CONFIG = {
-        'alphabet': "abc",     # Example alphabet
+        'alphabet': "abc",         # Example alphabet
         'min_length': 5,
         'max_length': 10,
-        'trials': 10000,        # Trials used during weight optimization
-        'precision': 0.001,    # Tolerance for binary search in optimization
-        'literal_prob': 0.5    # Initial literal probability (can be overridden by optimization)
+        'trials': 1000,            # Trials used during weight optimization
+        'num_optimizations': 40,   # Number of optimization runs
+        'precision': 0.05,        # Tolerance for binary search in optimization
+        'show_plot': True,         # Whether to show the plot of rolling averages
+        'num_samples': 30,         # Number of sample regexes to generate after optimization
+        'literal_prob': 0.5         # Initial literal probability (can be overridden by optimization)
     }
     
     # Orchestrator Step 1: Optimize weights based on the config.
-    optimized_weights = optimize_weights(CONFIG, trials=CONFIG['trials'], tolerance=CONFIG['precision'])
+    optimized_weights = optimize_weights_from_config(CONFIG)
     print("Optimized Weights:", optimized_weights)
     
     # Orchestrator Step 2: Generate a single regex.
