@@ -42,6 +42,25 @@ def draw_arrow(surface, start, end, color, arrow_width=2):
     pygame.draw.line(surface, color, end, (x1, y1), arrow_width)
     pygame.draw.line(surface, color, end, (x2, y2), arrow_width)
 
+def generate_dfa(alphabet, min_length, max_length):
+    """
+    Dummy function that takes an alphabet, a minimum length, and a maximum length.
+    Returns a DFA with an extra field 'regex'.
+    For simplicity, we return a static DFA whose transitions use the first two letters of the alphabet.
+    """
+    new_dfa = {
+        "start_state": 0,
+        "accept_states": [0, 2],
+        "dead_states": [1],
+        "transitions": {
+            0: {alphabet[0]: 1, alphabet[1]: 2},
+            1: {},
+            2: {alphabet[0]: 1, alphabet[1]: 2},
+        },
+        "regex": f"{alphabet[0]}({alphabet[1]})" + "{" + f"{min_length},{max_length}" + "}"
+    }
+    return new_dfa
+
 def main():
     pygame.init()
     screen_width, screen_height = 800, 600
@@ -50,53 +69,21 @@ def main():
     clock = pygame.time.Clock()
     font = pygame.font.Font(None, 36)
     
-    # Define the second example DFA.
-    # Fields:
-    # - "start_state": the starting state.
-    # - "accept_states": list of one or more accept states.
-    # - "dead_states": list of states with no exits.
-    # - "transitions": the state transition dictionary.
+    # --- Initial DFA definition ---
+    # (This DFA does not include a regex field yet.)
     dfa = {
         "start_state": 0,
-        "accept_states": [0, 2, 3, 4],
-        "dead_states": [1],
+        "accept_states": [1, 5],
+        "dead_states": [2],
         "transitions": {
-            0: {'a': 1, 'b': 2, 'c': 3, 'd': 1},
-            1: {},
-            2: {'a': 1, 'b': 2, 'c': 1, 'd': 1},
-            3: {'a': 1, 'b': 1, 'c': 1, 'd': 4},
-            4: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
+            0: {'a': 1, 'b': 2, 'c': 3, 'd': 4},
+            1: {'a': 1, 'b': 2, 'c': 2, 'd': 2},
+            2: {},
+            3: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
+            4: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
+            5: {'a': 2, 'b': 2, 'c': 2, 'd': 2},
         }
     }
-
-    dfa = {
-    "start_state": 0,
-    "accept_states": [0, 2, 3, 4],
-    "dead_states": [1],
-    "transitions": {
-        0: {'a': 1, 'b': 2, 'c': 1, 'd': 3},
-        1: {},
-        2: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
-        3: {'a': 1, 'b': 1, 'c': 1, 'd': 4},
-        4: {'a': 1, 'b': 1, 'c': 1, 'd': 4},
-    }
-
-    
-}
-    
-    dfa = {
-    "start_state": 0,
-    "accept_states": [1, 5],
-    "dead_states": [2],
-    "transitions": {
-        0: {'a': 1, 'b': 2, 'c': 3, 'd': 4},
-        1: {'a': 1, 'b': 2, 'c': 2, 'd': 2},
-        2: {},
-        3: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
-        4: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
-        5: {'a': 2, 'b': 2, 'c': 2, 'd': 2},
-    }
-}
     
     state_radius = 30
     states = list(dfa["transitions"].keys())
@@ -105,11 +92,16 @@ def main():
     current_state = dfa["start_state"]
     input_text = ""
     
+    # Define the reload button (positioned at top-right)
+    reload_button_rect = pygame.Rect(screen_width - 150, 20, 100, 40)
+    
     running = True
     while running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+
+            # Check for key presses for the DFA input.
             elif event.type == pygame.KEYDOWN:
                 # Handle backspace: remove the last character and recalc the state.
                 if event.key == pygame.K_BACKSPACE:
@@ -126,7 +118,7 @@ def main():
                         if matched is not None:
                             current_state = transitions[matched]
                 else:
-                    char = event.unicode  # Keep the character's original case.
+                    char = event.unicode  # Preserve the character's case.
                     # Allow letters (both cases) and numbers.
                     if char in "01ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
                         input_text += char
@@ -140,9 +132,21 @@ def main():
                         if matched is not None:
                             current_state = transitions[matched]
 
+            # Check for mouse clicks to handle the reload button.
+            elif event.type == pygame.MOUSEBUTTONDOWN:
+                if reload_button_rect.collidepoint(event.pos):
+                    # Call our dummy function. For this example we use:
+                    #   alphabet: "abcd", min length: 1, and max length: 5.
+                    dfa = generate_dfa("abcd", 1, 5)
+                    # Recalculate states and positions from the new DFA.
+                    states = list(dfa["transitions"].keys())
+                    positions = calculate_positions(states, dfa["start_state"], screen_width, screen_height)
+                    current_state = dfa["start_state"]
+                    input_text = ""
+                    
         screen.fill((255, 255, 255))  # White background
 
-        # Draw transitions as arrows.
+        # Draw the DFA transitions as arrows.
         arrow_color = (0, 0, 0)
         for state, transitions in dfa["transitions"].items():
             for symbol, target in transitions.items():
@@ -180,6 +184,17 @@ def main():
         pygame.draw.rect(screen, (200, 200, 200), text_box_rect)
         input_surface = font.render(input_text, True, (0, 0, 0))
         screen.blit(input_surface, (text_box_rect.x + 5, text_box_rect.y + 5))
+        
+        # Display the regex if available.
+        regex_str = dfa.get("regex", "")
+        if regex_str:
+            regex_surface = font.render("Regex: " + regex_str, True, (0, 0, 0))
+            screen.blit(regex_surface, (50, 20))
+        
+        # Draw the reload button.
+        pygame.draw.rect(screen, (180, 180, 180), reload_button_rect)
+        reload_text = font.render("Reload", True, (0, 0, 0))
+        screen.blit(reload_text, reload_text.get_rect(center=reload_button_rect.center))
 
         pygame.display.flip()
         clock.tick(60)

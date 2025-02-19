@@ -199,7 +199,8 @@ def regex_to_dfa(regex, alphabet):
         "start_state": start_state,
         "accept_states": list(accept_states),
         "dead_states": dead_states,
-        "transitions": dfa_transitions
+        "transitions": dfa_transitions,
+        "regex": regex
     }
 
 # === 5. Example Usage ===
@@ -208,6 +209,8 @@ if __name__ == "__main__":
     alphabet = "abcd"
     
     dfa = regex_to_dfa(regex_string, alphabet)
+
+    print(dfa)
     
     print("# DFA in the required format")
     print("dfa = {")
