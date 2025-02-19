@@ -3,18 +3,15 @@
 Module: regex_module.py
 
 This module provides functionality for generating regular expressions (regexes)
-using weighted probabilities and for calculating component weights.
-It is designed as a module to be imported into other codes.
+using optimized weighted probabilities. An orchestrator can supply a configuration
+dictionary (containing keys such as 'alphabet', 'min_length', 'max_length', etc.). 
 
-Primary Functions:
-  - generate_balanced_regex_with_weights(params, weights) -> str
-      Generates a regex string using the provided parameters and weights.
-  - get_weights(literal_prob) -> dict
-      Calculates and returns a dictionary of weights for regex components.
+The orchestrator workflow is as follows:
+  1. Call optimize_weights(config, trials, tolerance) to obtain the optimal weights.
+  2. Use generate_regex(config, weights) (or generate_regexes) to generate one or more
+     valid regex strings based on the provided configuration and optimized weights.
 
-The module follows exactly the same logic as the sample code provided,
-with the only modification being that the is_valid function is now abstracted
-to the top as a global helper.
+All underlying math and logic remain the same.
 """
 
 import random
@@ -39,7 +36,7 @@ LETTER_PATTERN = re.compile(r"[a-zA-Z]{4,}")
 
 def is_valid(regex: str, params) -> bool:
     """
-    Validate a regex string based on criteria defined by the parameters.
+    Validate a regex string based on criteria defined by params.
 
     Checks:
       - The regex is not empty.
@@ -50,13 +47,6 @@ def is_valid(regex: str, params) -> bool:
       - It does not have 4+ consecutive letters.
       - It contains a literal run of sufficient length (using params.literal_run_pattern).
       - It contains at least one set of parentheses.
-
-    Parameters:
-      regex (str): The regex string to validate.
-      params (RegexParams): An instance of RegexParams containing configuration.
-
-    Returns:
-      bool: True if the regex is valid; False otherwise.
     """
     if not regex:
         return False
@@ -79,7 +69,7 @@ def is_valid(regex: str, params) -> bool:
     if LETTER_PATTERN.search(regex):
         return False
 
-    # Use the precompiled literal run pattern from params.
+    # Check for the required literal run.
     if not params.literal_run_pattern.search(regex):
         return False
 
@@ -95,9 +85,7 @@ def is_valid(regex: str, params) -> bool:
 
 class RegexParams:
     """
-    Encapsulates regex generation/validation parameters that do not change
-    across calls, such as the fixed alphabet, min/max lengths, and precomputed
-    values like run_length, a compiled literal-run regex, and max_depth.
+    Encapsulates regex generation parameters.
     """
     def __init__(self, alphabet, min_length, max_length):
         self.alphabet = alphabet
@@ -107,25 +95,16 @@ class RegexParams:
         self.run_length = math.ceil(min_length / 5) + 1
         # Precompile the regex for detecting a literal run.
         self.literal_run_pattern = re.compile(r"[a-zA-Z]{" + str(self.run_length) + r",}")
-        # Compute maximum recursion depth from min_length.
+        # Compute maximum recursion depth.
         self.max_depth = max(3, math.ceil(math.log(min_length, 2)) + 1)
 
 # -----------------------------------------------------------------------------
-# Function: generate_balanced_regex_with_weights
+# Regex Generation Functions
 # -----------------------------------------------------------------------------
 
 def generate_balanced_regex_with_weights(params, weights):
     """
     Generate a regex string using branch probabilities provided by weights.
-    Uses precomputed parameters from params (which includes max_depth and alphabet).
-
-    Parameters:
-      params (RegexParams): An instance containing regex generation parameters.
-      weights (dict): A dictionary with keys 'literal', 'star', 'union', and 'concat'
-                      representing the probability weights for selecting each component.
-
-    Returns:
-      str: A regex string generated based on the provided parameters and weights.
     """
     # Precompute cumulative thresholds.
     literal_threshold = weights['literal']
@@ -133,15 +112,6 @@ def generate_balanced_regex_with_weights(params, weights):
     union_threshold = star_threshold + weights['union']
     
     def gen_regex(depth=0):
-        """
-        Recursively generate a regex string.
-        
-        Parameters:
-          depth (int): The current recursion depth.
-        
-        Returns:
-          str: A segment of the regex.
-        """
         if depth >= params.max_depth:
             return random.choice(params.alphabet)
         r = random.random()
@@ -159,24 +129,9 @@ def generate_balanced_regex_with_weights(params, weights):
     
     return gen_regex(0)
 
-# -----------------------------------------------------------------------------
-# Function: get_weights
-# -----------------------------------------------------------------------------
-
 def get_weights(literal_prob):
     """
-    Calculate and return a dictionary of weights for regex components based on literal_prob.
-    
-    Parameters:
-      literal_prob (float): The probability weight for selecting a literal.
-    
-    Returns:
-      dict: A dictionary containing weights for:
-            - 'literal'
-            - 'star'
-            - 'union'
-            - 'concat'
-      The sum of these weights is 1.
+    Calculate and return a dictionary of weights for regex components.
     """
     remaining = 1 - literal_prob
     return {
@@ -191,48 +146,21 @@ def get_weights(literal_prob):
 # -----------------------------------------------------------------------------
 
 def worker_eval_weights(args):
-    """
-    Worker function to evaluate if a generated regex is valid.
-    
-    Parameters:
-      args (tuple): Contains (params, weights)
-    
-    Returns:
-      int: 1 if the generated regex is valid; 0 otherwise.
-    """
     params, weights = args
     regex = generate_balanced_regex_with_weights(params, weights)
     return 1 if is_valid(regex, params) else 0
 
 def worker_generate_regex(args):
-    """
-    Worker function to generate a regex string.
-    
-    Parameters:
-      args (tuple): Contains (params, weights)
-    
-    Returns:
-      str: A generated regex string.
-    """
     params, weights = args
     return generate_balanced_regex_with_weights(params, weights)
 
 # -----------------------------------------------------------------------------
-# Evaluation Functions
+# Evaluation and Optimization Functions
 # -----------------------------------------------------------------------------
 
 def evaluate_weights(params, weights, trials=1000, executor=None):
     """
     Run trials to generate regexes and count how many pass the validation check.
-    
-    Parameters:
-      params (RegexParams): The regex parameters.
-      weights (dict): The component weights.
-      trials (int): Number of regexes to generate for evaluation.
-      executor (concurrent.futures.Executor, optional): Executor for parallel evaluation.
-    
-    Returns:
-      int: The count of valid regexes generated.
     """
     if executor is None:
         valid_count = 0
@@ -250,16 +178,6 @@ def evaluate_skip_metric(params, weights, target=100, executor=None, batch_size=
     """
     Generate regexes until 'target' regexes meeting min_length are produced.
     Returns the number of extra attempts (skips) required.
-    
-    Parameters:
-      params (RegexParams): The regex parameters.
-      weights (dict): The component weights.
-      target (int): Number of valid regexes required.
-      executor (concurrent.futures.Executor, optional): Executor for parallel generation.
-      batch_size (int): Batch size for parallel generation.
-    
-    Returns:
-      int: The number of extra attempts (skips) beyond the target.
     """
     count = 0
     attempts = 0
@@ -283,20 +201,8 @@ def evaluate_skip_metric(params, weights, target=100, executor=None, batch_size=
 
 def optimize_literal_weight(params, low=0.1, high=0.9, tolerance=0.01, delta=0.01, trials=1000, executor=None):
     """
-    Optimize the literal probability in [low, high] that maximizes a composite metric.
-    Composite metric = (valid_count / trials) - (skips / target)
-    
-    Parameters:
-      params (RegexParams): The regex parameters.
-      low (float): Lower bound for literal probability.
-      high (float): Upper bound for literal probability.
-      tolerance (float): Tolerance for stopping the optimization.
-      delta (float): Increment for derivative calculation.
-      trials (int): Number of trials for each composite metric evaluation.
-      executor (concurrent.futures.Executor, optional): Executor for parallel evaluation.
-    
-    Returns:
-      float: The optimal literal probability found.
+    Optimize the literal probability that maximizes a composite metric.
+    Composite metric = (valid_fraction) - (skip_ratio)
     """
     target = 100
     start_time = time.time()
@@ -326,129 +232,60 @@ def optimize_literal_weight(params, low=0.1, high=0.9, tolerance=0.01, delta=0.0
     print(f"\nOptimization completed in {total_time:.2f} seconds. Optimal literal weight: {optimal_x:.4f}")
     return optimal_x
 
-def generate_sample_regexes(params, weights, num_samples=15):
+def optimize_weights(config: dict, trials=1000, tolerance=0.001) -> dict:
     """
-    Generate and print sample regexes that pass the validation check.
-    
-    Parameters:
-      params (RegexParams): The regex parameters.
-      weights (dict): The component weights.
-      num_samples (int): Number of valid regexes to generate.
+    Given a configuration dictionary, optimize the literal probability and return the
+    corresponding weights for regex components.
     """
-    print("\nGenerated Sample Regexes:\n")
-    count = 0
-    skips = 0
-    while count < num_samples:
-        regex = generate_balanced_regex_with_weights(params, weights)
-        if is_valid(regex, params):
-            print(regex)
-            count += 1
-        else:
-            skips += 1
-
-        if skips == 1000:
-            print("1000 skips reached")
-            break
-    print(f"\nTotal skips: {skips}")
-
-def run_optimizations(alphabet, min_length, max_length, trials, num_optimizations, precision, show_plot=True, num_samples=15):
-    """
-    Run a series of optimizations using provided parameters and return average weights.
-    
-    Parameters:
-      alphabet (str): The allowed literal characters.
-      min_length (int): Minimum length of regex.
-      max_length (int): Maximum length of regex.
-      trials (int): Number of trials per optimization.
-      num_optimizations (int): Number of optimization runs.
-      precision (float): Tolerance for the optimization's binary search.
-      show_plot (bool): Whether to display a plot of weight rolling averages.
-      num_samples (int): Number of sample regexes to generate at the end.
-    
-    Returns:
-      dict: A dictionary containing the average weights after optimizations.
-    """
-    # Precompute invariant parameters once.
-    params = RegexParams(alphabet, min_length, max_length)
-    literal_weights = []
-    star_weights = []
-    union_weights = []
-    concat_weights = []
-
+    params = RegexParams(config['alphabet'], config['min_length'], config['max_length'])
     with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-        for _ in tqdm(range(num_optimizations), desc="Running optimizations"):
-            optimal_literal = optimize_literal_weight(params, tolerance=precision, trials=trials, executor=executor)
-            optimal_weights = get_weights(optimal_literal)
-            literal_weights.append(optimal_weights['literal'])
-            star_weights.append(optimal_weights['star'])
-            union_weights.append(optimal_weights['union'])
-            concat_weights.append(optimal_weights['concat'])
-
-    avg_literal = sum(literal_weights) / len(literal_weights)
-    avg_star = sum(star_weights) / len(star_weights)
-    avg_union = sum(union_weights) / len(union_weights)
-    avg_concat = sum(concat_weights) / len(concat_weights)
-
-    print("\nAverage Weights After {} Runs:".format(num_optimizations))
-    print(f"  literal: {avg_literal:.4f}")
-    print(f"  star: {avg_star:.4f}")
-    print(f"  union: {avg_union:.4f}")
-    print(f"  concat: {avg_concat:.4f}")
-
-    if show_plot:
-        runs = np.arange(1, num_optimizations + 1)
-        rolling_literal = np.cumsum(literal_weights) / runs
-        rolling_star = np.cumsum(star_weights) / runs
-        rolling_union = np.cumsum(union_weights) / runs
-        rolling_concat = np.cumsum(concat_weights) / runs
-
-        plt.figure(figsize=(10, 6))
-        plt.plot(runs, rolling_literal, label='Literal Rolling Avg')
-        plt.plot(runs, rolling_star, label='Star Rolling Avg')
-        plt.plot(runs, rolling_union, label='Union Rolling Avg')
-        plt.plot(runs, rolling_concat, label='Concat Rolling Avg')
-        plt.xlabel('Optimization Run')
-        plt.ylabel('Rolling Average Weight')
-        plt.title('Rolling Average of Weights Over {} Runs'.format(num_optimizations))
-        plt.legend()
-        plt.show()
-
-    avg_weights = {
-        'literal': avg_literal,
-        'star': avg_star,
-        'union': avg_union,
-        'concat': avg_concat
-    }
-    generate_sample_regexes(params, avg_weights, num_samples=num_samples)
-    return avg_weights
+        optimal_literal = optimize_literal_weight(params, tolerance=tolerance, trials=trials, executor=executor)
+    return get_weights(optimal_literal)
 
 # -----------------------------------------------------------------------------
-# Main Execution (for standalone testing)
+# Orchestrator Interface Functions
+# -----------------------------------------------------------------------------
+
+def generate_regex(config: dict, weights: dict) -> str:
+    """
+    Generate a single valid regex string using the provided configuration and weights.
+    """
+    params = RegexParams(config['alphabet'], config['min_length'], config['max_length'])
+    while True:
+        regex = generate_balanced_regex_with_weights(params, weights)
+        if is_valid(regex, params):
+            return regex
+
+def generate_regexes(config: dict, weights: dict, count=1):
+    """
+    Generate multiple valid regex strings.
+    """
+    return [generate_regex(config, weights) for _ in range(count)]
+
+# -----------------------------------------------------------------------------
+# Main Execution (Example usage as a standalone script)
 # -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
     CONFIG = {
-        'alphabet': "abc",    # Example alphabet
+        'alphabet': "abc",     # Example alphabet
         'min_length': 5,
         'max_length': 10,
-        'trials': 1000,
-        'num_optimizations': 1000,  # Number of optimization runs
-        'precision': 0.001,         # Tolerance for binary search in optimization
-        'show_plot': True,
-        'num_samples': 30          # Number of sample regexes to generate at the end
+        'trials': 10000,        # Trials used during weight optimization
+        'precision': 0.001,    # Tolerance for binary search in optimization
+        'literal_prob': 0.5    # Initial literal probability (can be overridden by optimization)
     }
     
-    final_weights = run_optimizations(
-        alphabet=CONFIG['alphabet'],
-        min_length=CONFIG['min_length'],
-        max_length=CONFIG['max_length'],
-        trials=CONFIG['trials'],
-        num_optimizations=CONFIG['num_optimizations'],
-        precision=CONFIG['precision'],
-        show_plot=CONFIG['show_plot'],
-        num_samples=CONFIG['num_samples']
-    )
-
-    print("\nFinal Average Weights:")
-    for k, v in final_weights.items():
-        print(f"  {k}: {v:.4f}")
+    # Orchestrator Step 1: Optimize weights based on the config.
+    optimized_weights = optimize_weights(CONFIG, trials=CONFIG['trials'], tolerance=CONFIG['precision'])
+    print("Optimized Weights:", optimized_weights)
+    
+    # Orchestrator Step 2: Generate a single regex.
+    regex = generate_regex(CONFIG, optimized_weights)
+    print("Generated Regex:", regex)
+    
+    # Orchestrator Step 3 (Optional): Generate multiple regexes.
+    regexes = generate_regexes(CONFIG, optimized_weights, count=5)
+    print("Generated Regexes:")
+    for r in regexes:
+        print(r)
