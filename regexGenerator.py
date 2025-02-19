@@ -63,8 +63,8 @@ def generate_balanced_regex(alphabet, min_length, max_length):
 
 # Example usage:
 if __name__ == "__main__":
-    alphabet = "abcd"  # Example alphabet
-    min_len = 10
+    alphabet = "abcde"  # Example alphabet
+    min_len = 15
     max_len = 20
 
 

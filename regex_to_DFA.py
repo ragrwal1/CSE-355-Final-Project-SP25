@@ -204,7 +204,7 @@ def regex_to_dfa(regex, alphabet):
 
 # === 5. Example Usage ===
 if __name__ == "__main__":
-    regex_string = "((cd|b*)|c)"
+    regex_string = "(a*|(c|d))(e|a)"
     alphabet = "abcd"
     
     dfa = regex_to_dfa(regex_string, alphabet)

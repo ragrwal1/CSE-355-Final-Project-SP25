@@ -68,6 +68,35 @@ def main():
             4: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
         }
     }
+
+    dfa = {
+    "start_state": 0,
+    "accept_states": [0, 2, 3, 4],
+    "dead_states": [1],
+    "transitions": {
+        0: {'a': 1, 'b': 2, 'c': 1, 'd': 3},
+        1: {},
+        2: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
+        3: {'a': 1, 'b': 1, 'c': 1, 'd': 4},
+        4: {'a': 1, 'b': 1, 'c': 1, 'd': 4},
+    }
+
+    
+}
+    
+    dfa = {
+    "start_state": 0,
+    "accept_states": [1, 5],
+    "dead_states": [2],
+    "transitions": {
+        0: {'a': 1, 'b': 2, 'c': 3, 'd': 4},
+        1: {'a': 1, 'b': 2, 'c': 2, 'd': 2},
+        2: {},
+        3: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
+        4: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
+        5: {'a': 2, 'b': 2, 'c': 2, 'd': 2},
+    }
+}
     
     state_radius = 30
     states = list(dfa["transitions"].keys())
