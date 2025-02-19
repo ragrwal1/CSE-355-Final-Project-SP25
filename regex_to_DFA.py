@@ -1,4 +1,5 @@
 import random
+import math
 
 # === 1. Regex Parser ===
 class RegexParser:
@@ -187,10 +188,20 @@ def get_accept_states(dfa_states, nfa_accept):
 
 # === 4. Regex-to-DFA Converter Function ===
 def regex_to_dfa(regex, alphabet):
+    """
+    Converts a given regular expression into a DFA.
+    
+    Returns a dictionary with the following keys:
+      - "start_state": the starting state (an integer)
+      - "accept_states": a list of accept state numbers
+      - "dead_states": a list of dead state numbers (if any)
+      - "transitions": a dict mapping each state to its transitions
+      - "regex": the original regex string
+    """
     parser = RegexParser(regex)
     tree = parser.parse()
     global state_id
-    state_id = 0
+    state_id = 0  # Reset state counter for a new conversion.
     nfa_start, nfa_accept, nfa_trans = build_nfa(tree)
     dfa_transitions, start_state, dfa_state_map, dead_state = nfa_to_dfa(nfa_start, nfa_accept, nfa_trans, alphabet)
     accept_states = get_accept_states(dfa_state_map, nfa_accept)
@@ -205,14 +216,13 @@ def regex_to_dfa(regex, alphabet):
 
 # === 5. Example Usage ===
 if __name__ == "__main__":
+    # Example regular expression and alphabet.
     regex_string = "(a*|(c|d))(e|a)"
     alphabet = "abcd"
     
     dfa = regex_to_dfa(regex_string, alphabet)
 
-    print(dfa)
-    
-    print("# DFA in the required format")
+    # Print the DFA in the required format.
     print("dfa = {")
     print(f"    \"start_state\": {dfa['start_state']},")
     print(f"    \"accept_states\": {dfa['accept_states']},")
@@ -220,5 +230,6 @@ if __name__ == "__main__":
     print("    \"transitions\": {")
     for state, trans in sorted(dfa["transitions"].items()):
         print(f"        {state}: {trans},")
-    print("    }")
+    print("    },")
+    print(f"    \"regex\": \"{dfa['regex']}\"")
     print("}")

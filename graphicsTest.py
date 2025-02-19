@@ -1,6 +1,7 @@
 import pygame
 import sys
 import math
+from randomDFA import randomDFA
 
 def calculate_positions(states, start_state, screen_width, screen_height):
     """Distributes states evenly in a circular pattern, ensuring that
@@ -48,17 +49,14 @@ def generate_dfa(alphabet, min_length, max_length):
     Returns a DFA with an extra field 'regex'.
     For simplicity, we return a static DFA whose transitions use the first two letters of the alphabet.
     """
-    new_dfa = {
-        "start_state": 0,
-        "accept_states": [0, 2],
-        "dead_states": [1],
-        "transitions": {
-            0: {alphabet[0]: 1, alphabet[1]: 2},
-            1: {},
-            2: {alphabet[0]: 1, alphabet[1]: 2},
-        },
-        "regex": f"{alphabet[0]}({alphabet[1]})" + "{" + f"{min_length},{max_length}" + "}"
-    }
+     # Use only the first two 
+
+
+    alphabet = "abcde"  # Example alphabet
+    min_length = 15
+    max_length = 20
+    new_dfa = randomDFA(alphabet, min_length, max_length)
+    print(new_dfa)
     return new_dfa
 
 def main():
@@ -82,8 +80,10 @@ def main():
             3: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
             4: {'a': 5, 'b': 2, 'c': 2, 'd': 2},
             5: {'a': 2, 'b': 2, 'c': 2, 'd': 2},
-        }
+        },
+        "regex": "(a*|(c|d))(e|a)"
     }
+
     
     state_radius = 30
     states = list(dfa["transitions"].keys())

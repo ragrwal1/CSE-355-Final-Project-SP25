@@ -7,6 +7,7 @@ def randomDFA(alphabet, min_len, max_len):
     dfa = regex_to_dfa(regex_string, alphabet)
     print(f"Generated regex: {regex_string}")
     print(f"Equivalent DFA: {dfa}")
+    return dfa
 
 
 if __name__ == "__main__":
