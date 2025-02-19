@@ -68,6 +68,19 @@ def main():
         }
     }
     
+    dfa = {
+    "start_state": 0,
+    "accept_states": [0, 2, 3, 4],
+    "dead_states": [1],
+    "transitions": {
+        0: {'a': 1, 'b': 2, 'c': 3, 'd': 1},
+        1: {},
+        2: {'a': 1, 'b': 2, 'c': 1, 'd': 1},
+        3: {'a': 1, 'b': 1, 'c': 1, 'd': 4},
+        4: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
+    }
+}
+    
     state_radius = 30
     states = list(dfa["transitions"].keys())
     positions = calculate_positions(states, dfa["start_state"], screen_width, screen_height)
@@ -92,7 +105,7 @@ def main():
                             break
                 else:
                     char = event.unicode.upper()
-                    if char in "01ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+                    if char in "01ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
                         input_text += char
                         if char in dfa["transitions"][current_state]:
                             current_state = dfa["transitions"][current_state][char]

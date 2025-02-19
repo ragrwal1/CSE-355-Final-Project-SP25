@@ -1,222 +1,221 @@
-import pprint
+import random
 
-# === AST Node Classes ===
-class Literal:
-    def __init__(self, char):
-        self.char = char
-    def __repr__(self):
-        return f"Literal({self.char})"
-
-class Concat:
-    def __init__(self, left, right):
-        self.left = left
-        self.right = right
-    def __repr__(self):
-        return f"Concat({self.left}, {self.right})"
-
-class Union:
-    def __init__(self, left, right):
-        self.left = left
-        self.right = right
-    def __repr__(self):
-        return f"Union({self.left}, {self.right})"
-
-class Star:
-    def __init__(self, expr):
-        self.expr = expr
-    def __repr__(self):
-        return f"Star({self.expr})"
-
-# === A Simple Recursive-Descent Parser ===
-#
-# Our regexes are “balanced” and use the following grammar:
-#
-#    expr   := term { term }        # concatenation is implicit
-#    term   := factor [ "*" ]
-#    factor := literal | "(" expr [ "|" expr ] ")"
-#
-# (Note that unions are always written with parentheses.)
+# === 1. Regex Parser ===
 class RegexParser:
     def __init__(self, pattern):
-        self.p = pattern
-        self.i = 0
+        self.pattern = pattern
+        self.pos = 0
 
     def parse(self):
-        return self.parse_expr()
+        return self.parse_union()
 
-    def parse_expr(self):
-        expr = self.parse_term()
-        # Concatenation: while the next character is not a ) or |, keep reading factors.
-        while self.i < len(self.p) and self.p[self.i] not in ')|':
-            expr = Concat(expr, self.parse_term())
-        return expr
+    def parse_union(self):
+        node = self.parse_concat()
+        while self.pos < len(self.pattern) and self.pattern[self.pos] == '|':
+            self.pos += 1
+            right = self.parse_concat()
+            node = ('union', node, right)
+        return node
 
-    def parse_term(self):
-        atom = self.parse_factor()
-        # Handle postfix Kleene star.
-        while self.i < len(self.p) and self.p[self.i] == '*':
-            self.i += 1
-            atom = Star(atom)
-        return atom
+    def parse_concat(self):
+        nodes = []
+        while self.pos < len(self.pattern) and self.pattern[self.pos] not in ')|':
+            nodes.append(self.parse_repeat())
+        if not nodes:
+            return ('epsilon',)
+        node = nodes[0]
+        for n in nodes[1:]:
+            node = ('concat', node, n)
+        return node
 
-    def parse_factor(self):
-        if self.p[self.i] == '(':
-            self.i += 1  # consume '('
-            expr = self.parse_expr()
-            # If a union operator is present, parse the second branch.
-            if self.i < len(self.p) and self.p[self.i] == '|':
-                self.i += 1  # consume '|'
-                right = self.parse_expr()
-                expr = Union(expr, right)
-            if self.i >= len(self.p) or self.p[self.i] != ')':
-                raise Exception("Unmatched parenthesis")
-            self.i += 1  # consume ')'
-            return expr
+    def parse_repeat(self):
+        node = self.parse_atom()
+        while self.pos < len(self.pattern) and self.pattern[self.pos] == '*':
+            self.pos += 1
+            node = ('star', node)
+        return node
+
+    def parse_atom(self):
+        if self.pattern[self.pos] == '(':
+            self.pos += 1
+            node = self.parse_union()
+            if self.pos >= len(self.pattern) or self.pattern[self.pos] != ')':
+                raise ValueError("Mismatched parentheses")
+            self.pos += 1
+            return node
         else:
-            # Literal character
-            c = self.p[self.i]
-            self.i += 1
-            return Literal(c)
+            c = self.pattern[self.pos]
+            self.pos += 1
+            return ('lit', c)
 
-# === Thompson’s Construction: Regex AST -> NFA ===
-#
-# We represent an NFA as a tuple (start, accept, transitions) where:
-#   - states are integers,
-#   - transitions is a dict mapping state -> list of (symbol, next_state) pairs,
-#   - epsilon-transitions use symbol None.
-def new_state(counter):
-    s = counter[0]
-    counter[0] += 1
+# === 2. Thompson's Construction (Regex -> NFA) ===
+
+state_id = 0
+def new_state():
+    global state_id
+    s = state_id
+    state_id += 1
     return s
 
-def regex_to_nfa(ast, counter):
-    if isinstance(ast, Literal):
-        s = new_state(counter)
-        e = new_state(counter)
-        transitions = {s: [(ast.char, e)], e: []}
-        return s, e, transitions
+def add_transition(trans, s, symbol, t):
+    if s not in trans:
+        trans[s] = {}
+    if symbol not in trans[s]:
+        trans[s][symbol] = set()
+    trans[s][symbol].add(t)
 
-    elif isinstance(ast, Concat):
-        s1, e1, t1 = regex_to_nfa(ast.left, counter)
-        s2, e2, t2 = regex_to_nfa(ast.right, counter)
-        # Add an epsilon from the left accept state to the right start state.
-        t1[e1] = t1.get(e1, []) + [(None, s2)]
-        # Merge t1 and t2:
-        for state, trans in t2.items():
-            t1[state] = t1.get(state, []) + trans
-        return s1, e2, t1
+def combine_transitions(t1, t2):
+    result = {}
+    for d in (t1, t2):
+        for s, mapping in d.items():
+            if s not in result:
+                result[s] = {}
+            for symbol, targets in mapping.items():
+                if symbol not in result[s]:
+                    result[s][symbol] = set()
+                result[s][symbol] |= targets
+    return result
 
-    elif isinstance(ast, Union):
-        s = new_state(counter)
-        e = new_state(counter)
-        s1, e1, t1 = regex_to_nfa(ast.left, counter)
-        s2, e2, t2 = regex_to_nfa(ast.right, counter)
-        transitions = {s: [(None, s1), (None, s2)]}
-        # Merge transitions from both branches.
-        for t in (t1, t2):
-            for state, trans in t.items():
-                transitions[state] = transitions.get(state, []) + trans
-        transitions[e1] = transitions.get(e1, []) + [(None, e)]
-        transitions[e2] = transitions.get(e2, []) + [(None, e)]
-        if e not in transitions:
-            transitions[e] = []
-        return s, e, transitions
-
-    elif isinstance(ast, Star):
-        s = new_state(counter)
-        e = new_state(counter)
-        s1, e1, t1 = regex_to_nfa(ast.expr, counter)
-        transitions = {s: [(None, s1), (None, e)]}
-        for state, trans in t1.items():
-            transitions[state] = trans
-        transitions[e1] = transitions.get(e1, []) + [(None, s1), (None, e)]
-        if e not in transitions:
-            transitions[e] = []
-        return s, e, transitions
-
+def build_nfa(node):
+    if node[0] == 'lit':
+        s = new_state()
+        t = new_state()
+        trans = {}
+        add_transition(trans, s, node[1], t)
+        if t not in trans:
+            trans[t] = {}
+        return s, t, trans
+    elif node[0] == 'epsilon':
+        s = new_state()
+        t = new_state()
+        trans = {}
+        add_transition(trans, s, None, t)
+        if t not in trans:
+            trans[t] = {}
+        return s, t, trans
+    elif node[0] == 'concat':
+        s1, t1, trans1 = build_nfa(node[1])
+        s2, t2, trans2 = build_nfa(node[2])
+        add_transition(trans1, t1, None, s2)
+        trans = combine_transitions(trans1, trans2)
+        return s1, t2, trans
+    elif node[0] == 'union':
+        s = new_state()
+        t = new_state()
+        s1, t1, trans1 = build_nfa(node[1])
+        s2, t2, trans2 = build_nfa(node[2])
+        trans = {}
+        add_transition(trans, s, None, s1)
+        add_transition(trans, s, None, s2)
+        add_transition(trans, t1, None, t)
+        add_transition(trans, t2, None, t)
+        trans = combine_transitions(trans, trans1)
+        trans = combine_transitions(trans, trans2)
+        if t not in trans:
+            trans[t] = {}
+        return s, t, trans
+    elif node[0] == 'star':
+        s = new_state()
+        t = new_state()
+        s1, t1, trans1 = build_nfa(node[1])
+        trans = {}
+        add_transition(trans, s, None, s1)
+        add_transition(trans, s, None, t)
+        add_transition(trans, t1, None, s1)
+        add_transition(trans, t1, None, t)
+        trans = combine_transitions(trans, trans1)
+        if t not in trans:
+            trans[t] = {}
+        return s, t, trans
     else:
-        raise Exception("Unknown AST node")
+        raise ValueError("Unknown node type: " + node[0])
 
-# === NFA -> DFA Conversion (Subset Construction) ===
-
-# Compute the epsilon closure of a set of NFA states.
-def epsilon_closure(states, trans):
+def epsilon_closure(trans, states):
     stack = list(states)
     closure = set(states)
     while stack:
         s = stack.pop()
-        for symbol, ns in trans.get(s, []):
-            if symbol is None and ns not in closure:
-                closure.add(ns)
-                stack.append(ns)
+        if s in trans and None in trans[s]:
+            for nxt in trans[s][None]:
+                if nxt not in closure:
+                    closure.add(nxt)
+                    stack.append(nxt)
     return closure
 
-# Given a set of states, return all states reachable by a given symbol.
-def move(states, symbol, trans):
-    result = set()
-    for s in states:
-        for sym, ns in trans.get(s, []):
-            if sym == symbol:
-                result.add(ns)
-    return result
-
-# Convert the NFA into a DFA. The DFA is returned as a dictionary
-# mapping state numbers to a dictionary of transitions.
+# === 3. Subset Construction (NFA -> DFA) ===
 def nfa_to_dfa(nfa_start, nfa_accept, trans, alphabet):
-    start = frozenset(epsilon_closure({nfa_start}, trans))
-    dfa = {}
-    mapping = {start: 0}  # maps frozenset of NFA states -> DFA state number
-    unmarked = [start]
-    dfa_state = 1
+    dfa_states = {}
+    dfa_transitions = {}
+    start_set = frozenset(epsilon_closure(trans, {nfa_start}))
+    dfa_states[start_set] = 0
+    start_state = 0
+    unmarked = [start_set]
+    next_state_id = 1
+    dead_state = None
+
     while unmarked:
         current = unmarked.pop(0)
-        dfa[mapping[current]] = {}
-        for a in alphabet:
-            target = frozenset(epsilon_closure(move(current, a, trans), trans))
-            if not target:
-                continue
-            if target not in mapping:
-                mapping[target] = dfa_state
-                dfa_state += 1
-                unmarked.append(target)
-            dfa[mapping[current]][a] = mapping[target]
-    accepts = {mapping[s] for s in mapping if nfa_accept in s}
-    return dfa, mapping[start], accepts
+        current_id = dfa_states[current]
+        dfa_transitions[current_id] = {}
+        for symbol in alphabet:
+            move_set = set()
+            for s in current:
+                if s in trans and symbol in trans[s]:
+                    move_set |= trans[s][symbol]
+            closure = epsilon_closure(trans, move_set)
+            if not closure:
+                if dead_state is None:
+                    dead_state = next_state_id
+                    next_state_id += 1
+                    dfa_transitions[dead_state] = {}
+                dfa_transitions[current_id][symbol] = dead_state
+            else:
+                closure_f = frozenset(closure)
+                if closure_f not in dfa_states:
+                    dfa_states[closure_f] = next_state_id
+                    next_state_id += 1
+                    unmarked.append(closure_f)
+                dfa_transitions[current_id][symbol] = dfa_states[closure_f]
+    return dfa_transitions, start_state, dfa_states, dead_state
 
-# Find all states in the DFA that have no leaving transitions.
-def find_dead_states(dfa):
-    return {s for s, moves in dfa.items() if len(moves) == 0}
+def get_accept_states(dfa_states, nfa_accept):
+    accept_states = set()
+    for state_set, dfa_id in dfa_states.items():
+        if nfa_accept in state_set:
+            accept_states.add(dfa_id)
+    return accept_states
 
-# === Main Function: Regex -> DFA ===
-#
-# Returns a 4-tuple: (dfa, dfa_start, accept_states, dead_states)
-def regex_to_dfa(regex, alph=None):
+# === 4. Regex-to-DFA Converter Function ===
+def regex_to_dfa(regex, alphabet):
     parser = RegexParser(regex)
-    ast = parser.parse()
-    counter = [0]
-    nfa_start, nfa_accept, trans = regex_to_nfa(ast, counter)
-    # If no alphabet is provided, extract it from the transitions.
-    if alph is None:
-        alph = set()
-        for moves in trans.values():
-            for sym, _ in moves:
-                if sym is not None:
-                    alph.add(sym)
-        alph = sorted(list(alph))
-    dfa, start, accepts = nfa_to_dfa(nfa_start, nfa_accept, trans, alph)
-    dead = find_dead_states(dfa)
-    return dfa, start, accepts, dead
+    tree = parser.parse()
+    global state_id
+    state_id = 0
+    nfa_start, nfa_accept, nfa_trans = build_nfa(tree)
+    dfa_transitions, start_state, dfa_state_map, dead_state = nfa_to_dfa(nfa_start, nfa_accept, nfa_trans, alphabet)
+    accept_states = get_accept_states(dfa_state_map, nfa_accept)
+    dead_states = [dead_state] if dead_state is not None else []
+    return {
+        "start_state": start_state,
+        "accept_states": list(accept_states),
+        "dead_states": dead_states,
+        "transitions": dfa_transitions
+    }
 
-# === Example Usage ===
-#
-# For example, given the regex generated by:
-#    ((cd|b*)|c)
-#
-# a correct output is a DFA (here printed using pprint)
-if __name__ == '__main__':
-    regex = "((cd|b*)|c)"
-    dfa, start, accepts, dead = regex_to_dfa(regex)
-    print("dfa =")
-    pprint.pprint(dfa)
-    print("\n[Start state, Accept states, Dead states] =")
-    print([start, accepts, dead])
+# === 5. Example Usage ===
+if __name__ == "__main__":
+    regex_string = "((cd|b*)|c)"
+    alphabet = "abcd"
+    
+    dfa = regex_to_dfa(regex_string, alphabet)
+    
+    print("# DFA in the required format")
+    print("dfa = {")
+    print(f"    \"start_state\": {dfa['start_state']},")
+    print(f"    \"accept_states\": {dfa['accept_states']},")
+    print(f"    \"dead_states\": {dfa['dead_states']},")
+    print("    \"transitions\": {")
+    for state, trans in sorted(dfa["transitions"].items()):
+        print(f"        {state}: {trans},")
+    print("    }")
+    print("}")
