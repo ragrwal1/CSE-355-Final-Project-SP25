@@ -84,6 +84,34 @@ def main():
         "regex": "(a*|(c|d))(e|a)"
     }
 
+    dfa = {
+    "start_state": 0,
+    "accept_states": [4, 5],
+    "dead_states": [1],
+    "transitions": {
+        0: {'a': 1, 'b': 1, 'c': 2, 'd': 1},
+        1: {},
+        2: {'a': 3, 'b': 4, 'c': 1, 'd': 5},
+        3: {'a': 3, 'b': 4, 'c': 1, 'd': 5},
+        4: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
+        5: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
+    },
+    "regex": "ca*(d|b)"
+}
+    
+    dfa = {
+    "start_state": 3,
+    "accept_states": [0],
+    
+    "transitions": {
+        0: {'a': 1, 'b': 1, 'c': 0, 'd': 1},
+        1: {'a': 1, 'b': 1, 'c': 1, 'd': 1},
+        2: {'a': 1, 'b': 1, 'c': 0, 'd': 1},
+        3: {'a': 0, 'b': 1, 'c': 2, 'd': 1},
+    },
+    "regex": "(cc|a)c*"
+}
+
     
     state_radius = 30
     states = list(dfa["transitions"].keys())

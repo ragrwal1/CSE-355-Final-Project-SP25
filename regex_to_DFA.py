@@ -1,235 +1,299 @@
 import random
+import re
+import time
 import math
+import os
+from tqdm import tqdm
+import concurrent.futures
+import matplotlib.pyplot as plt
+import numpy as np  # Added for rolling average calculation
 
-# === 1. Regex Parser ===
-class RegexParser:
-    def __init__(self, pattern):
-        self.pattern = pattern
-        self.pos = 0
+# Precompile a pattern to detect 4+ consecutive letters.
+LETTER_PATTERN = re.compile(r"[a-zA-Z]{4,}")
 
-    def parse(self):
-        return self.parse_union()
-
-    def parse_union(self):
-        node = self.parse_concat()
-        while self.pos < len(self.pattern) and self.pattern[self.pos] == '|':
-            self.pos += 1
-            right = self.parse_concat()
-            node = ('union', node, right)
-        return node
-
-    def parse_concat(self):
-        nodes = []
-        while self.pos < len(self.pattern) and self.pattern[self.pos] not in ')|':
-            nodes.append(self.parse_repeat())
-        if not nodes:
-            return ('epsilon',)
-        node = nodes[0]
-        for n in nodes[1:]:
-            node = ('concat', node, n)
-        return node
-
-    def parse_repeat(self):
-        node = self.parse_atom()
-        while self.pos < len(self.pattern) and self.pattern[self.pos] == '*':
-            self.pos += 1
-            node = ('star', node)
-        return node
-
-    def parse_atom(self):
-        if self.pattern[self.pos] == '(':
-            self.pos += 1
-            node = self.parse_union()
-            if self.pos >= len(self.pattern) or self.pattern[self.pos] != ')':
-                raise ValueError("Mismatched parentheses")
-            self.pos += 1
-            return node
-        else:
-            c = self.pattern[self.pos]
-            self.pos += 1
-            return ('lit', c)
-
-# === 2. Thompson's Construction (Regex -> NFA) ===
-
-state_id = 0
-def new_state():
-    global state_id
-    s = state_id
-    state_id += 1
-    return s
-
-def add_transition(trans, s, symbol, t):
-    if s not in trans:
-        trans[s] = {}
-    if symbol not in trans[s]:
-        trans[s][symbol] = set()
-    trans[s][symbol].add(t)
-
-def combine_transitions(t1, t2):
-    result = {}
-    for d in (t1, t2):
-        for s, mapping in d.items():
-            if s not in result:
-                result[s] = {}
-            for symbol, targets in mapping.items():
-                if symbol not in result[s]:
-                    result[s][symbol] = set()
-                result[s][symbol] |= targets
-    return result
-
-def build_nfa(node):
-    if node[0] == 'lit':
-        s = new_state()
-        t = new_state()
-        trans = {}
-        add_transition(trans, s, node[1], t)
-        if t not in trans:
-            trans[t] = {}
-        return s, t, trans
-    elif node[0] == 'epsilon':
-        s = new_state()
-        t = new_state()
-        trans = {}
-        add_transition(trans, s, None, t)
-        if t not in trans:
-            trans[t] = {}
-        return s, t, trans
-    elif node[0] == 'concat':
-        s1, t1, trans1 = build_nfa(node[1])
-        s2, t2, trans2 = build_nfa(node[2])
-        add_transition(trans1, t1, None, s2)
-        trans = combine_transitions(trans1, trans2)
-        return s1, t2, trans
-    elif node[0] == 'union':
-        s = new_state()
-        t = new_state()
-        s1, t1, trans1 = build_nfa(node[1])
-        s2, t2, trans2 = build_nfa(node[2])
-        trans = {}
-        add_transition(trans, s, None, s1)
-        add_transition(trans, s, None, s2)
-        add_transition(trans, t1, None, t)
-        add_transition(trans, t2, None, t)
-        trans = combine_transitions(trans, trans1)
-        trans = combine_transitions(trans, trans2)
-        if t not in trans:
-            trans[t] = {}
-        return s, t, trans
-    elif node[0] == 'star':
-        s = new_state()
-        t = new_state()
-        s1, t1, trans1 = build_nfa(node[1])
-        trans = {}
-        add_transition(trans, s, None, s1)
-        add_transition(trans, s, None, t)
-        add_transition(trans, t1, None, s1)
-        add_transition(trans, t1, None, t)
-        trans = combine_transitions(trans, trans1)
-        if t not in trans:
-            trans[t] = {}
-        return s, t, trans
-    else:
-        raise ValueError("Unknown node type: " + node[0])
-
-def epsilon_closure(trans, states):
-    stack = list(states)
-    closure = set(states)
-    while stack:
-        s = stack.pop()
-        if s in trans and None in trans[s]:
-            for nxt in trans[s][None]:
-                if nxt not in closure:
-                    closure.add(nxt)
-                    stack.append(nxt)
-    return closure
-
-# === 3. Subset Construction (NFA -> DFA) ===
-def nfa_to_dfa(nfa_start, nfa_accept, trans, alphabet):
-    dfa_states = {}
-    dfa_transitions = {}
-    start_set = frozenset(epsilon_closure(trans, {nfa_start}))
-    dfa_states[start_set] = 0
-    start_state = 0
-    unmarked = [start_set]
-    next_state_id = 1
-    dead_state = None
-
-    while unmarked:
-        current = unmarked.pop(0)
-        current_id = dfa_states[current]
-        dfa_transitions[current_id] = {}
-        for symbol in alphabet:
-            move_set = set()
-            for s in current:
-                if s in trans and symbol in trans[s]:
-                    move_set |= trans[s][symbol]
-            closure = epsilon_closure(trans, move_set)
-            if not closure:
-                if dead_state is None:
-                    dead_state = next_state_id
-                    next_state_id += 1
-                    dfa_transitions[dead_state] = {}
-                dfa_transitions[current_id][symbol] = dead_state
-            else:
-                closure_f = frozenset(closure)
-                if closure_f not in dfa_states:
-                    dfa_states[closure_f] = next_state_id
-                    next_state_id += 1
-                    unmarked.append(closure_f)
-                dfa_transitions[current_id][symbol] = dfa_states[closure_f]
-    return dfa_transitions, start_state, dfa_states, dead_state
-
-def get_accept_states(dfa_states, nfa_accept):
-    accept_states = set()
-    for state_set, dfa_id in dfa_states.items():
-        if nfa_accept in state_set:
-            accept_states.add(dfa_id)
-    return accept_states
-
-# === 4. Regex-to-DFA Converter Function ===
-def regex_to_dfa(regex, alphabet):
+# --- Generation Code with Weights (Length-Aware) ---
+def generate_balanced_regex_with_weights(alphabet, min_length, max_length, weights, max_depth=None):
     """
-    Converts a given regular expression into a DFA.
+    Generate a regex string using branch probabilities provided by `weights`.
+    The recursion depth is chosen based on min_length to help generate longer regexes.
+    """
+    if max_depth is None:
+        max_depth = max(3, math.ceil(math.log(min_length, 2)) + 1)
     
-    Returns a dictionary with the following keys:
-      - "start_state": the starting state (an integer)
-      - "accept_states": a list of accept state numbers
-      - "dead_states": a list of dead state numbers (if any)
-      - "transitions": a dict mapping each state to its transitions
-      - "regex": the original regex string
+    def gen_regex(depth=0):
+        if depth >= max_depth:
+            return random.choice(alphabet)  # base case
+        r = random.random()
+        # Branch based on cumulative probability.
+        if r < weights['literal']:
+            return random.choice(alphabet)
+        elif r < weights['literal'] + weights['star']:
+            subexpr = gen_regex(depth + 1) if random.random() > 0.7 else random.choice(alphabet)
+            return f"{subexpr}*"
+        elif r < weights['literal'] + weights['star'] + weights['union']:
+            left = gen_regex(depth + 1) if random.random() > 0.5 else random.choice(alphabet)
+            right = gen_regex(depth + 1) if random.random() > 0.5 else random.choice(alphabet)
+            return f"({left}|{right})"
+        else:
+            return gen_regex(depth + 1) + gen_regex(depth + 1)
+    
+    return gen_regex(0)
+
+# --- is_valid Function ---
+def is_valid(regex, min_length, max_length):
     """
-    parser = RegexParser(regex)
-    tree = parser.parse()
-    global state_id
-    state_id = 0  # Reset state counter for a new conversion.
-    nfa_start, nfa_accept, nfa_trans = build_nfa(tree)
-    dfa_transitions, start_state, dfa_state_map, dead_state = nfa_to_dfa(nfa_start, nfa_accept, nfa_trans, alphabet)
-    accept_states = get_accept_states(dfa_state_map, nfa_accept)
-    dead_states = [dead_state] if dead_state is not None else []
+    Check if regex meets the following:
+      - Length within min_length and max_length.
+      - Contains at least one Kleene star.
+      - Contains no more than two union ('|') operators.
+      - No triple parentheses.
+      - Does not have 4+ consecutive letters.
+    """
+    if not regex:
+        return False
+    L = len(regex)
+    if L < min_length or L > max_length:
+        return False
+    if regex.count('*') < 1:
+        return False
+    if regex.count('|') > 2:
+        return False
+    if "(((" in regex or ")))" in regex:
+        return False
+    if LETTER_PATTERN.search(regex):
+        return False
+    
+    #no more than 1 kleene star in a row
+    if "**" in regex:
+        return False
+    
+    # no more than 2 total kleene star 
+    if regex.count('*') > 2:
+        return False
+    
+    #calculate round up of minlength/5
+    floor = math.ceil(min_length/5) + 1
+    # 
+    #at least one run of length floor of literals
+    if not re.search(r"[a-zA-Z]{"+str(floor)+",}", regex):
+        return False
+    
+    #at least one set of parentheses
+    if not re.search(r"\(", regex):
+        return False
+    
+    return True
+
+# --- Weight Helper ---
+def get_weights(literal_prob):
+    remaining = 1 - literal_prob
     return {
-        "start_state": start_state,
-        "accept_states": list(accept_states),
-        "dead_states": dead_states,
-        "transitions": dfa_transitions,
-        "regex": regex
+        'literal': literal_prob,
+        'star': remaining * 0.5,
+        'union': remaining * 0.3,
+        'concat': remaining * 0.2
     }
 
-# === 5. Example Usage ===
-if __name__ == "__main__":
-    # Example regular expression and alphabet.
-    regex_string = "(a*|(c|d))(e|a)"
-    alphabet = "abcd"
-    
-    dfa = regex_to_dfa(regex_string, alphabet)
+# --- Worker Functions for Parallelism ---
+def worker_eval_weights(args):
+    alphabet, min_length, max_length, weights = args
+    regex = generate_balanced_regex_with_weights(alphabet, min_length, max_length, weights)
+    return 1 if is_valid(regex, min_length, max_length) else 0
 
-    # Print the DFA in the required format.
-    print("dfa = {")
-    print(f"    \"start_state\": {dfa['start_state']},")
-    print(f"    \"accept_states\": {dfa['accept_states']},")
-    print(f"    \"dead_states\": {dfa['dead_states']},")
-    print("    \"transitions\": {")
-    for state, trans in sorted(dfa["transitions"].items()):
-        print(f"        {state}: {trans},")
-    print("    },")
-    print(f"    \"regex\": \"{dfa['regex']}\"")
-    print("}")
+def worker_generate_regex(args):
+    alphabet, min_length, max_length, weights = args
+    return generate_balanced_regex_with_weights(alphabet, min_length, max_length, weights)
+
+# --- Evaluation Functions ---
+def evaluate_weights(weights, alphabet, min_length, max_length, trials=1000, executor=None):
+    """
+    Run trials to generate a regex and count how many pass is_valid.
+    If an executor is provided, use it to parallelize the work.
+    """
+    if executor is None:
+        valid_count = 0
+        for _ in tqdm(range(trials), desc="Evaluating weights", leave=False):
+            regex = generate_balanced_regex_with_weights(alphabet, min_length, max_length, weights)
+            if is_valid(regex, min_length, max_length):
+                valid_count += 1
+        return valid_count
+    else:
+        args_list = [(alphabet, min_length, max_length, weights)] * trials
+        results = list(executor.map(worker_eval_weights, args_list, chunksize=max(1, trials // 10)))
+        return sum(results)
+
+def evaluate_skip_metric(weights, alphabet, min_length, max_length, target=100, executor=None, batch_size=200):
+    """
+    Generate regexes until 'target' regexes meeting min_length are produced.
+    Returns the number of extra attempts (skips) required.
+    """
+    count = 0
+    attempts = 0
+    if executor is None:
+        while count < target:
+            regex = generate_balanced_regex_with_weights(alphabet, min_length, max_length, weights)
+            attempts += 1
+            if len(regex) >= min_length:
+                count += 1
+    else:
+        while count < target:
+            args_list = [(alphabet, min_length, max_length, weights)] * batch_size
+            regexes = list(executor.map(worker_generate_regex, args_list, chunksize=max(1, batch_size // 4)))
+            for regex in regexes:
+                attempts += 1
+                if len(regex) >= min_length:
+                    count += 1
+                    if count >= target:
+                        break
+    return attempts - target
+
+# --- Composite Optimization Function ---
+def optimize_literal_weight(alphabet, min_length, max_length, low=0.1, high=0.9, tolerance=0.01, delta=0.01, trials=1000, executor=None):
+    """
+    Optimize the literal probability (x) in [low, high] that maximizes a composite metric.
+    Composite metric = (valid_count / trials) - (skips / target)
+    The search stops when the range is less than 'tolerance' (precision).
+    """
+    target = 100
+    start_time = time.time()
+    iteration = 0
+
+    def composite_metric(x):
+        weights = get_weights(x)
+        valid_fraction = evaluate_weights(weights, alphabet, min_length, max_length, trials, executor=executor) / trials
+        skip_ratio = evaluate_skip_metric(weights, alphabet, min_length, max_length, target, executor=executor) / target
+        return valid_fraction - skip_ratio
+
+    while high - low > tolerance:
+        iteration += 1
+        mid = (low + high) / 2
+        cm_plus = composite_metric(mid + delta)
+        cm_minus = composite_metric(mid - delta)
+        derivative = (cm_plus - cm_minus) / (2 * delta)
+        cm_mid = composite_metric(mid)
+        # Debug print (preserving functionality)
+        print(f"Iteration {iteration}: x = {mid:.4f}, composite = {cm_mid:.4f}, derivative = {derivative:.4f}")
+        if derivative > 0:
+            low = mid
+        else:
+            high = mid
+
+    optimal_x = (low + high) / 2
+    total_time = time.time() - start_time
+    print(f"\nOptimization completed in {total_time:.2f} seconds. Optimal literal weight: {optimal_x:.4f}")
+    return optimal_x
+
+# --- Generate Sample Regexes Using Best Weights ---
+def generate_sample_regexes(alphabet, min_length, max_length, weights, num_samples=15):
+    print("\nGenerated Sample Regexes:\n")
+    count = 0
+    skips = 0
+    while count < num_samples:
+        regex = generate_balanced_regex_with_weights(alphabet, min_length, max_length, weights)
+        if is_valid(regex, min_length, max_length):
+            print(regex)
+            count += 1
+        else:
+            skips += 1
+
+        if skips == 1000:
+            print("1000 skips reached")
+            break
+    print(f"\nTotal skips: {skips}")
+
+# --- Composite Runner Function ---
+def run_optimizations(alphabet, min_length, max_length, trials, num_optimizations, precision, show_plot=True, num_samples=15):
+    """
+    Run a series of optimizations using provided parameters.
+    Returns a dictionary of average weights.
+    
+    :param precision: Controls the tolerance (stopping precision) for the binary search in optimization.
+    """
+    # Lists to store weights over multiple optimization runs.
+    literal_weights = []
+    star_weights = []
+    union_weights = []
+    concat_weights = []
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        for _ in tqdm(range(num_optimizations), desc="Running optimizations"):
+            optimal_literal = optimize_literal_weight(alphabet, min_length, max_length, tolerance=precision, trials=trials, executor=executor)
+            optimal_weights = get_weights(optimal_literal)
+            literal_weights.append(optimal_weights['literal'])
+            star_weights.append(optimal_weights['star'])
+            union_weights.append(optimal_weights['union'])
+            concat_weights.append(optimal_weights['concat'])
+    
+    # Calculate average weights.
+    avg_literal = sum(literal_weights) / len(literal_weights)
+    avg_star = sum(star_weights) / len(star_weights)
+    avg_union = sum(union_weights) / len(union_weights)
+    avg_concat = sum(concat_weights) / len(concat_weights)
+    
+    print("\nAverage Weights After {} Runs:".format(num_optimizations))
+    print(f"  literal: {avg_literal:.4f}")
+    print(f"  star: {avg_star:.4f}")
+    print(f"  union: {avg_union:.4f}")
+    print(f"  concat: {avg_concat:.4f}")
+    
+    if show_plot:
+        # --- Plot the Rolling Averages of Weights ---
+        runs = np.arange(1, num_optimizations + 1)
+        rolling_literal = np.cumsum(literal_weights) / runs
+        rolling_star = np.cumsum(star_weights) / runs
+        rolling_union = np.cumsum(union_weights) / runs
+        rolling_concat = np.cumsum(concat_weights) / runs
+        
+        plt.figure(figsize=(10, 6))
+        plt.plot(runs, rolling_literal, label='Literal Rolling Avg')
+        plt.plot(runs, rolling_star, label='Star Rolling Avg')
+        plt.plot(runs, rolling_union, label='Union Rolling Avg')
+        plt.plot(runs, rolling_concat, label='Concat Rolling Avg')
+        plt.xlabel('Optimization Run')
+        plt.ylabel('Rolling Average Weight')
+        plt.title('Rolling Average of Weights Over {} Runs'.format(num_optimizations))
+        plt.legend()
+        plt.show()
+    
+    # Generate sample regexes using the average weights.
+    avg_weights = {
+        'literal': avg_literal,
+        'star': avg_star,
+        'union': avg_union,
+        'concat': avg_concat
+    }
+    generate_sample_regexes(alphabet, min_length, max_length, avg_weights, num_samples=num_samples)
+    
+    return avg_weights
+
+# --- Configurable Parameters (moved to bottom) ---
+if __name__ == "__main__":
+    # These parameters can be adjusted as needed.
+    CONFIG = {
+        'alphabet': "abcde",    # Example alphabet
+        'min_length': 5,
+        'max_length': 6,
+        'trials': 500,
+        'num_optimizations': 150,  # Number of optimization runs
+        'precision': 0.01,         # Precision (tolerance) for binary search in optimization
+        'show_plot': True,
+        'num_samples': 15          # Number of sample regexes to generate at the end
+    }
+    
+    final_weights = run_optimizations(
+        alphabet=CONFIG['alphabet'],
+        min_length=CONFIG['min_length'],
+        max_length=CONFIG['max_length'],
+        trials=CONFIG['trials'],
+        num_optimizations=CONFIG['num_optimizations'],
+        precision=CONFIG['precision'],
+        show_plot=CONFIG['show_plot'],
+        num_samples=CONFIG['num_samples']
+    )
+
+    print("\nFinal Average Weights:")
+    print(final_weights)
+    
+    print("\nFinal Average Weights:")
+    for k, v in final_weights.items():
+        print(f"  {k}: {v:.4f}")

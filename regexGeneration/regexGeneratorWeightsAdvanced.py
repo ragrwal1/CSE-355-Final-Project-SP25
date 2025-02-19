@@ -6,6 +6,7 @@ import os
 from tqdm import tqdm
 import concurrent.futures
 import matplotlib.pyplot as plt
+import numpy as np  # Added for rolling average calculation
 
 # Precompile a pattern to detect 4+ consecutive letters.
 LETTER_PATTERN = re.compile(r"[a-zA-Z]{4,}")
@@ -60,6 +61,13 @@ def is_valid(regex, min_length, max_length):
     if "(((" in regex or ")))" in regex:
         return False
     if LETTER_PATTERN.search(regex):
+        return False
+    #no consecutive kleene stars. 
+    if "**" in regex:
+        return False
+
+    #at least one set of consecutive letters in the regex
+    if not re.search(r"[a-zA-Z]{2,}", regex):
         return False
     return True
 
@@ -168,7 +176,7 @@ def generate_sample_regexes(alphabet, min_length, max_length, weights, num_sampl
     skips = 0
     while count < num_samples:
         regex = generate_balanced_regex_with_weights(alphabet, min_length, max_length, weights)
-        if len(regex) >= min_length:
+        if is_valid(regex, min_length, max_length):
             print(regex)
             count += 1
         else:
@@ -177,10 +185,10 @@ def generate_sample_regexes(alphabet, min_length, max_length, weights, num_sampl
 
 # --- Main Runner ---
 if __name__ == "__main__":
-    alphabet = "abcde"   # Example alphabet
-    min_length = 15
-    max_length = 20
-    trials = 1000
+    alphabet = "abcd"   # Example alphabet
+    min_length = 6
+    max_length = 8
+    trials = 100
 
     # Lists to store weights over multiple optimization runs.
     literal_weights = []
@@ -188,7 +196,7 @@ if __name__ == "__main__":
     union_weights = []
     concat_weights = []
 
-    num_optimizations = 50  # (Originally 50 runs; change as needed)
+    num_optimizations = 150  # (Originally 50 runs; change as needed)
 
     # Create a global process pool to parallelize evaluation functions.
     with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
@@ -212,15 +220,21 @@ if __name__ == "__main__":
     print(f"  union: {avg_union:.4f}")
     print(f"  concat: {avg_concat:.4f}")
 
-    # Plot the weights over the optimization runs.
+    # --- Plot the Rolling Averages of Weights ---
+    runs = np.arange(1, num_optimizations + 1)
+    rolling_literal = np.cumsum(literal_weights) / runs
+    rolling_star = np.cumsum(star_weights) / runs
+    rolling_union = np.cumsum(union_weights) / runs
+    rolling_concat = np.cumsum(concat_weights) / runs
+
     plt.figure(figsize=(10, 6))
-    plt.plot(literal_weights, label='Literal')
-    plt.plot(star_weights, label='Star')
-    plt.plot(union_weights, label='Union')
-    plt.plot(concat_weights, label='Concat')
-    plt.xlabel('Run')
-    plt.ylabel('Weight')
-    plt.title('Weights Over {} Runs'.format(num_optimizations))
+    plt.plot(runs, rolling_literal, label='Literal Rolling Avg')
+    plt.plot(runs, rolling_star, label='Star Rolling Avg')
+    plt.plot(runs, rolling_union, label='Union Rolling Avg')
+    plt.plot(runs, rolling_concat, label='Concat Rolling Avg')
+    plt.xlabel('Optimization Run')
+    plt.ylabel('Rolling Average Weight')
+    plt.title('Rolling Average of Weights Over {} Runs'.format(num_optimizations))
     plt.legend()
     plt.show()
 
