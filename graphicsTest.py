@@ -102,7 +102,7 @@ def generate_dfa(alphabet, min_length, max_length):
     alphabet = "abcde"  # Example alphabet
     min_length = 15
     max_length = 20
-    new_dfa = randomDFA(alphabet, min_length, max_length)
+    new_dfa = randomDFA()
     print(new_dfa)
     return new_dfa
 
