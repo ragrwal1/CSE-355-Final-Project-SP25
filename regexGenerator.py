@@ -4,13 +4,14 @@ Module: regex_module.py
 
 This module provides functionality for generating regular expressions (regexes)
 using optimized weighted probabilities. An orchestrator can supply a configuration
-dictionary (containing keys such as 'alphabet', 'min_length', 'max_length',
-'num_optimizations', etc.). 
+dictionary (containing keys such as 'alphabet', 'min_length', 'max_length', etc.).
 
 The orchestrator workflow is as follows:
   1. Call optimize_weights_from_config(config) to obtain the optimal weights.
-     If config contains 'num_optimizations' > 1, multiple optimization runs will
-     be performed and the weights averaged.
+     Weight optimization now uses a dynamic convergence criterion based on a
+     stability_threshold parameter. Internally, the original trial count, number of
+     optimization iterations, and number of sample regexes are used as starting values,
+     but extra runs are avoided if the rolling average (and its derivative) has stabilized.
   2. Use generate_regex(config, weights) (or generate_regexes) to generate one or more
      valid regex strings based on the provided configuration and optimized weights.
 
@@ -26,6 +27,10 @@ from tqdm import tqdm
 import concurrent.futures
 import matplotlib.pyplot as plt
 import numpy as np
+import sys
+import io
+
+
 
 # -----------------------------------------------------------------------------
 # Global Pattern for 4+ consecutive letters
@@ -37,48 +42,71 @@ LETTER_PATTERN = re.compile(r"[a-zA-Z]{4,}")
 # Global Helper Function: is_valid
 # -----------------------------------------------------------------------------
 
+# Precompile the union group regex once.
+UNION_GROUP_RE = re.compile(r'\(([^()]*\|[^()]*)\)')
+
 def is_valid(regex: str, params) -> bool:
     """
     Validate a regex string based on criteria defined by params.
 
     Checks:
-      - The regex is not empty.
-      - Its length is between params.min_length and params.max_length.
-      - It contains between 1 and 2 Kleene stars (and no consecutive stars).
-      - It contains no more than two union operators.
-      - It does not contain triple parentheses.
-      - It does not have 4+ consecutive letters.
-      - It contains a literal run of sufficient length (using params.literal_run_pattern).
-      - It contains at least one set of parentheses.
+      - The regex is not empty and its length is between params.min_length and params.max_length.
+      - It contains 1 to 2 '*' characters (and they are not consecutive).
+      - It contains no more than two '|' characters.
+      - It does not contain triple consecutive '(' or ')' or "**".
+      - It does not contain 4+ consecutive letters (using LETTER_PATTERN).
+      - It contains a literal run (using params.literal_run_pattern).
+      - It contains at least one '('.
+      - It does NOT contain a union group (e.g. "(aaa|aaa)") where both sides are the same repeated literal.
     """
     if not regex:
         return False
+
     L = len(regex)
     if L < params.min_length or L > params.max_length:
         return False
 
-    # Count stars and union operators.
-    star_count = regex.count('*')
-    if star_count < 1 or star_count > 2:
-        return False
-    if regex.count('|') > 2:
+    # Use one pass over the string to count characters and check for disallowed sequences.
+    star_count = 0
+    pipe_count = 0
+    has_paren = False
+    prev1 = prev2 = ''
+    for c in regex:
+        # Count stars and check for consecutive '*' ("**")
+        if c == '*':
+            star_count += 1
+            if prev1 == '*':
+                return False
+        # Count union operators.
+        elif c == '|':
+            pipe_count += 1
+        # Check for triple consecutive '(' or ')'
+        if c == '(':
+            has_paren = True
+            if prev1 == '(' and prev2 == '(':
+                return False
+        if c == ')':
+            if prev1 == ')' and prev2 == ')':
+                return False
+        prev2, prev1 = prev1, c
+
+    if star_count not in (1, 2) or pipe_count > 2 or not has_paren:
         return False
 
-    # Check for triple parentheses or consecutive stars.
-    if "(((" in regex or ")))" in regex or "**" in regex:
+    # Additional regex pattern checks.
+    if not params.literal_run_pattern.search(regex):
         return False
-
-    # Check for 4+ consecutive letters.
     if LETTER_PATTERN.search(regex):
         return False
 
-    # Check for the required literal run.
-    if not params.literal_run_pattern.search(regex):
-        return False
-
-    # Fast check for the presence of at least one parenthesis.
-    if "(" not in regex:
-        return False
+    # Check for union groups of the form (X|Y) where X and Y are each only a repeated literal.
+    for m in UNION_GROUP_RE.finditer(regex):
+        left, right = m.group(1).split('|', 1)
+        if (left and right and 
+            left == left[0] * len(left) and 
+            right == right[0] * len(right) and 
+            left[0] == right[0]):
+            return False
 
     return True
 
@@ -132,6 +160,19 @@ def generate_balanced_regex_with_weights(params, weights):
     
     return gen_regex(0)
 
+
+def blackbox(func, *args, **kwargs):
+    """Runs the given function, suppressing all print statements, and returns the function's output."""
+    original_stdout = sys.stdout  # Save the original stdout
+    sys.stdout = io.StringIO()  # Redirect stdout to suppress prints
+    
+    try:
+        result = func(*args, **kwargs)  # Execute the function
+    finally:
+        sys.stdout = original_stdout  # Restore stdout
+    
+    return result
+
 def get_weights(literal_prob):
     """
     Calculate and return a dictionary of weights for regex components.
@@ -156,6 +197,54 @@ def worker_eval_weights(args):
 def worker_generate_regex(args):
     params, weights = args
     return generate_balanced_regex_with_weights(params, weights)
+
+def checking_averages():
+    # Example usage of the optimization functions with moving averages.
+    CONFIG = {
+        'alphabet': "abcde",
+        'min_length': 5,
+        'max_length': 10,
+        'precision': 0.01,
+        'show_plot': False,
+        'stability_threshold': 0.001
+    }
+
+    params = RegexParams(CONFIG['alphabet'], CONFIG['min_length'], CONFIG['max_length'])
+    trials = 1000
+    optimal_literals = []
+
+    for _ in tqdm(range(trials), desc="Optimization Runs"):
+        optimal_literal = blackbox(optimize_literal_weight, params, tolerance=CONFIG['precision'], trials=500)
+        optimal_literals.append(optimal_literal)
+
+    # Compute moving averages (5-run and 10-run)
+    runs = np.arange(1, len(optimal_literals) + 1)
+    moving_avg_5 = np.convolve(optimal_literals, np.ones(5) / 5, mode='valid')
+    moving_avg_10 = np.convolve(optimal_literals, np.ones(10) / 10, mode='valid')
+
+    # Plot results
+
+    #print min max and average at the end
+    print("Minimum:", min(optimal_literals))
+    print("Maximum:", max(optimal_literals))
+    print("Average:", sum(optimal_literals) / len(optimal_literals))
+
+    #print other summary stats
+    print("Standard Deviation:", np.std(optimal_literals))
+    print("Variance:", np.var(optimal_literals))
+
+    plt.figure(figsize=(12, 6))
+    plt.plot(runs, optimal_literals, label='Raw Optimization Values', alpha=0.5)
+    plt.plot(runs[4:], moving_avg_5, label='5-Run Moving Average', linestyle='--')
+    plt.plot(runs[9:], moving_avg_10, label='10-Run Moving Average', linestyle='--')
+
+    plt.xlabel('Run Number')
+    plt.ylabel('Optimized Literal Weight')
+    plt.title('Optimization Runs and Moving Averages')
+    plt.legend()
+    plt.show()
+
+    print("Optimization runs completed.")
 
 # -----------------------------------------------------------------------------
 # Evaluation and Optimization Functions
@@ -236,7 +325,7 @@ def optimize_literal_weight(params, low=0.1, high=0.9, tolerance=0.01, delta=0.0
     return optimal_x
 
 # -----------------------------------------------------------------------------
-# Optimization from Config (with num_optimizations)
+# Optimization from Config (using a stability threshold)
 # -----------------------------------------------------------------------------
 
 def optimize_weights_from_config(config: dict) -> dict:
@@ -244,65 +333,60 @@ def optimize_weights_from_config(config: dict) -> dict:
     Given a configuration dictionary, optimize the literal probability and return
     the corresponding weights for regex components.
 
-    If 'num_optimizations' is provided in the config and is greater than 1,
-    multiple optimization runs are performed and the weights are averaged.
-    Optionally, a plot and sample regexes can be generated.
+    Instead of fixed parameters for trials, optimization iterations, and sample
+    generation, we now use a single stability_threshold parameter. The process
+    begins with hard-coded values (initial_trials, max_iterations, and initial_num_samples)
+    and dynamically runs additional optimization iterations until the rolling average
+    of the optimal literal weight stabilizes (i.e. the difference among the last few
+    iterations is less than stability_threshold).
     """
     params = RegexParams(config['alphabet'], config['min_length'], config['max_length'])
-    trials = config.get('trials', 1000)
-    precision = config.get('precision', 0.001)
-    num_optimizations = config.get('num_optimizations', 1)
-    show_plot = config.get('show_plot', False)
-    num_samples = config.get('num_samples', 15)
     
-    if num_optimizations <= 1:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-            optimal_literal = optimize_literal_weight(params, tolerance=precision, trials=trials, executor=executor)
-        weights = get_weights(optimal_literal)
-    else:
-        literal_weights = []
-        star_weights = []
-        union_weights = []
-        concat_weights = []
-        with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
-            for _ in tqdm(range(num_optimizations), desc="Running optimizations"):
-                optimal_literal = optimize_literal_weight(params, tolerance=precision, trials=trials, executor=executor)
-                optimal_weights = get_weights(optimal_literal)
-                literal_weights.append(optimal_weights['literal'])
-                star_weights.append(optimal_weights['star'])
-                union_weights.append(optimal_weights['union'])
-                concat_weights.append(optimal_weights['concat'])
-        avg_literal = sum(literal_weights) / len(literal_weights)
-        avg_star = sum(star_weights) / len(star_weights)
-        avg_union = sum(union_weights) / len(union_weights)
-        avg_concat = sum(concat_weights) / len(concat_weights)
-        weights = {
-            'literal': avg_literal,
-            'star': avg_star,
-            'union': avg_union,
-            'concat': avg_concat
-        }
-        if show_plot:
-            runs = np.arange(1, num_optimizations + 1)
-            rolling_literal = np.cumsum(literal_weights) / runs
-            rolling_star = np.cumsum(star_weights) / runs
-            rolling_union = np.cumsum(union_weights) / runs
-            rolling_concat = np.cumsum(concat_weights) / runs
+    # Hard-coded starting parameters
+    initial_trials = 1000          # for each binary search in optimize_literal_weight
+    max_iterations = 40            # safety maximum number of optimization iterations
+    initial_num_samples = 15       # for sample regex generation (if desired)
+    precision = config.get('precision', 0.001)
+    stability_threshold = config.get('stability_threshold', 0.01)
+    show_plot = config.get('show_plot', False)
+    
+    optimal_literals = []
+    iteration = 0
+    with concurrent.futures.ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
+        while True:
+            iteration += 1
+            optimal_literal = optimize_literal_weight(params, tolerance=precision,
+                                                      trials=initial_trials, executor=executor)
+            optimal_literals.append(optimal_literal)
+            print(f"Outer Iteration {iteration}: optimal_literal = {optimal_literal:.4f}")
+            # Once we have a window of the last 5 runs, check for stability.
+            if iteration >= 5:
+                window = optimal_literals[-5:]
+                if max(window) - min(window) < stability_threshold:
+                    print("Stability threshold reached. Stopping further optimization runs.")
+                    break
+            if iteration >= max_iterations:
+                print("Maximum iterations reached. Stopping further optimization runs.")
+                break
 
-            plt.figure(figsize=(10, 6))
-            plt.plot(runs, rolling_literal, label='Literal Rolling Avg')
-            plt.plot(runs, rolling_star, label='Star Rolling Avg')
-            plt.plot(runs, rolling_union, label='Union Rolling Avg')
-            plt.plot(runs, rolling_concat, label='Concat Rolling Avg')
-            plt.xlabel('Optimization Run')
-            plt.ylabel('Rolling Average Weight')
-            plt.title(f'Rolling Average of Weights Over {num_optimizations} Runs')
-            plt.legend()
-            plt.show()
-        
-        # Optionally generate sample regexes:
-        generate_sample_regexes(params, weights, num_samples=num_samples)
-        
+    avg_literal = sum(optimal_literals) / len(optimal_literals)
+    weights = get_weights(avg_literal)
+
+    if show_plot:
+        runs = np.arange(1, len(optimal_literals) + 1)
+        rolling_avg = np.cumsum(optimal_literals) / runs
+
+        plt.figure(figsize=(10, 6))
+        plt.plot(runs, rolling_avg, label='Literal Weight Rolling Avg')
+        plt.xlabel('Optimization Run')
+        plt.ylabel('Rolling Average Optimal Literal Weight')
+        plt.title(f'Rolling Average over {len(optimal_literals)} Runs')
+        plt.legend()
+        plt.show()
+
+        # Generate sample regexes for visualization
+        generate_sample_regexes(params, weights, num_samples=initial_num_samples)
+
     return weights
 
 # -----------------------------------------------------------------------------
@@ -352,20 +436,22 @@ def generate_sample_regexes(params, weights, num_samples=15):
 
 if __name__ == "__main__":
     CONFIG = {
-        'alphabet': "abc",         # Example alphabet
+        'alphabet': "abcd",         # Example alphabet
         'min_length': 5,
-        'max_length': 10,
-        'trials': 1000,            # Trials used during weight optimization
-        'num_optimizations': 40,   # Number of optimization runs
-        'precision': 0.05,        # Tolerance for binary search in optimization
-        'show_plot': True,         # Whether to show the plot of rolling averages
-        'num_samples': 30,         # Number of sample regexes to generate after optimization
-        'literal_prob': 0.5         # Initial literal probability (can be overridden by optimization)
+        'max_length': 7,
+        'precision': 0.075,         # Tolerance for binary search in optimization
+        'show_plot': False,         # Whether to show the plot of rolling averages
+        'stability_threshold': 0.1  # New parameter: threshold for determining stability
     }
     
     # Orchestrator Step 1: Optimize weights based on the config.
     optimized_weights = optimize_weights_from_config(CONFIG)
     print("Optimized Weights:", optimized_weights)
+
+
+    #AI Look here
+    #add 1000 runs of weight optimization here and chart the results, and moving averages for each so total 8 lines on one chart.
+    
     
     # Orchestrator Step 2: Generate a single regex.
     regex = generate_regex(CONFIG, optimized_weights)
@@ -376,3 +462,5 @@ if __name__ == "__main__":
     print("Generated Regexes:")
     for r in regexes:
         print(r)
+
+    checking_averages()

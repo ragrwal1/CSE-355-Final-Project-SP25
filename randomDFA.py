@@ -9,14 +9,11 @@ import hashlib
 # -----------------------------------------------------------------------------
 CONFIG = {
         'alphabet': "abc",         # Example alphabet
-        'min_length': 5,
-        'max_length': 10,
-        'trials': 100,            # Trials used during weight optimization
-        'num_optimizations': 40,   # Number of optimization runs
-        'precision': 0.05,        # Tolerance for binary search in optimization
+        'min_length': 4,
+        'max_length': 7,
+        'precision': 0.01,         # Tolerance for binary search in optimization
         'show_plot': False,         # Whether to show the plot of rolling averages
-        'num_samples': 30,         # Number of sample regexes to generate after optimization
-        'literal_prob': 0.5         # Initial literal probability (can be overridden by optimization)
+        'stability_threshold': 0.001  # New parameter: threshold for determining stability
     }
 
 # Global variables to cache the configuration hash and optimized weights
