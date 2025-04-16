@@ -151,3 +151,14 @@ How this mapping is stored and retrieved is TBD (e.g., hardcoded object, JSON fi
 *   **More Config Options:** Time limits per problem, different validation modes.
 *   **Basic Analytics (Client-side):** Use `localStorage` to track simple metrics for the user's own reference (e.g., number of practice problems attempted).
 *   **NFA Support:** Add Non-deterministic Finite Automata practice. 
+
+
+stuff to add:
+
+api's
+some sort of completion code so studnets don't add the same thing.
+glassmorphic design
+adding regex should just be either adding a regex or generating a regex etc. 
+create a supabase db. 
+host on vercel
+figure out backend stuff. 
