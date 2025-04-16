@@ -1,0 +1,153 @@
+CONTRIBUTOR GUIDE: Interactive DFA/Regex Practice Tool
+=====================================================
+
+Version: 0.2 (Simplified Vision)
+
+**Table of Contents**
+1.  High-Level Goal
+2.  Core Technologies
+3.  Application Modes
+    *   Challenge Set Mode (Code-Based)
+    *   Infinite Practice Mode
+    *   Challenge Creation Mode
+4.  Data Structure (Conceptual)
+5.  Core Workflow
+    *   Creating a Challenge Set
+    *   Solving a Challenge Set
+    *   Using Infinite Practice
+6.  Key Application Components/Pages
+7.  Technical Considerations
+8.  Potential Future Ideas (Simplified Scope)
+
+---
+
+**1. High-Level Goal**
+-----------------------
+
+The primary goal is to create a straightforward, web-based tool for practicing the conversion of Deterministic Finite Automata (DFAs) to Regular Expressions (Regex). It serves two main purposes:
+
+*   **Structured Practice:** Allows educators to create predefined sets of DFA/Regex problems (challenges) identified by a unique code, which students can then access and solve.
+*   **Unstructured Practice:** Provides an "Infinite Practice" mode for students to generate and solve random DFA/Regex problems on demand.
+
+The tool is designed to be simple and accessible without requiring user accounts or logins. Verification of student work (for assigned challenges) relies on manual screenshots.
+
+**2. Core Technologies**
+----------------------
+
+*   **Framework:** Next.js (using the App Router)
+*   **Language:** TypeScript
+*   **Styling:** Tailwind CSS
+*   **UI Components:** shadcn/ui (or similar)
+*   **Visualization:** Suitable graph visualization library (e.g., react-flow, vis-network, custom SVG).
+*   **State Management (Client-side):** React Hooks (`useState`, `useEffect`), `localStorage` (primarily for remembering added challenge codes on the home page).
+*   **DFA/Regex Generation:** Logic for generating random DFAs and corresponding Regex (can be simple initially).
+*   **Challenge Data Storage (Conceptual):** A mechanism to map generated `challengeId` codes to their corresponding DFA lists, Regex lists, and configurations. Initially, this could be a hardcoded object/JSON file within the project or fetched from a simple static file hosting. No complex database is planned.
+
+**3. Application Modes**
+------------------------
+
+The application operates in three main modes:
+
+*   **3.1. Challenge Set Mode (Code-Based):**
+    *   Accessed by navigating to the home page and entering a specific `challengeId` (code).
+    *   Loads a predefined sequence of DFA/Regex problems associated with that code.
+    *   Tracks progress *within the current session* as the user moves through the problems.
+    *   Presents a final summary screen upon completion or exhaustion of attempts.
+*   **3.2. Infinite Practice Mode:**
+    *   Accessed via a dedicated link/button, likely from the home page.
+    *   Generates random DFA/Regex problems one at a time.
+    *   Includes configuration options for generation complexity.
+    *   No codes, no long-term tracking.
+*   **3.3. Challenge Creation Mode:**
+    *   Accessed via a specific URL path (e.g., `/create`). Not prominently linked on the student-facing home page.
+    *   Provides tools for an educator/creator to:
+        *   Generate multiple DFA/Regex pairs using the same generator as the practice mode, with specific configurations.
+        *   Manually define DFA/Regex pairs.
+        *   Define overall challenge set configurations (e.g., number of guesses per problem).
+    *   Outputs a unique `challengeId` that bundles the defined problems and configs. This code is then manually shared with students.
+
+**4. Data Structure (Conceptual for a Challenge Set)**
+-----------------------------------------------------
+
+When a `challengeId` is generated, it needs to map to the following data:
+
+```typescript
+interface ChallengeSet {
+  id: string; // The unique challengeId / code
+  regexSolutions: string[]; // List of one or more valid regex strings
+  configs: {
+    guessesPerProblem?: number; // Example config: Max guesses allowed for each regex
+    // Other configs like time limits could be added
+  };
+  // Optional metadata
+  name?: string;
+  description?: string;
+}
+```
+
+How this mapping is stored and retrieved is TBD (e.g., hardcoded object, JSON file served statically).
+
+**5. Core Workflow**
+--------------------
+
+*   **5.1. Creating a Challenge Set (`/create` page):**
+    1.  Creator navigates to the creation page.
+    2.  Uses UI tools to assemble a list of DFA/Regex problems (either generated or manually defined).
+    3.  Sets configurations (e.g., max guesses).
+    4.  Clicks a "Generate Code" button.
+    5.  The application bundles the `problems` and `configs`, stores them associated with a newly generated unique `challengeId` (using the conceptual data storage mechanism).
+    6.  The `challengeId` is displayed to the creator.
+    7.  Creator manually copies and shares this code with students.
+*   **5.2. Solving a Challenge Set (Home Page -> Simulation):**
+    1.  Student visits the home page (`/`).
+    2.  Enters a `challengeId` received from the teacher into an input field.
+    3.  (Optional) The app could use `localStorage` to remember codes the student has entered previously, displaying them as a list for easy access.
+    4.  Student clicks "Start Challenge".
+    5.  App fetches the `ChallengeSet` data associated with the code.
+    6.  Navigates to a simulation view (e.g., `/challenge/[challengeId]`).
+    7.  Displays the first DFA.
+    8.  Student interacts, simulates, and attempts to guess the Regex.
+    9.  App validates the guess against `regexSolutions` for the current problem, considering `configs.guessesPerProblem`.
+    10. Student progresses through all problems in the set.
+    11. A final screen summarizes performance (e.g., # solved, attempts used).
+    12. Student takes a screenshot of the summary screen for manual submission.
+*   **5.3. Using Infinite Practice (`/practice` page):**
+    1.  Student navigates to the practice page.
+    2.  (Optional) Adjusts generator configuration sliders/inputs.
+    3.  App displays a randomly generated DFA.
+    4.  Student interacts, simulates, guesses Regex.
+    5.  App provides feedback (correct/incorrect).
+    6.  Student can click "Generate New" to get a fresh problem.
+
+**6. Key Application Components/Pages**
+--------------------------------------
+
+*   **`app/layout.tsx`:** Root layout.
+*   **`app/page.tsx`:** Home page (entry point, input for challenge codes, list of remembered codes, link to practice mode).
+*   **`app/challenge/[id]/page.tsx`:** Dynamic page for running a specific challenge set.
+*   **`app/practice/page.tsx`:** Infinite Practice Mode page.
+*   **`app/create/page.tsx`:** Challenge Creation interface.
+*   **`components/dfa/DFAVisualizer.tsx`:** Renders the interactive DFA graph.
+*   **`components/dfa/SimulationInterface.tsx`:** Combined controls for simulation, regex input, validation, and feedback within a challenge or practice session.
+*   **`components/create/ChallengeBuilder.tsx`:** UI components for the creation page (DFA generator controls, manual definition forms).
+*   **`lib/dfaUtils.ts`:** DFA logic, generation, validation.
+*   **`lib/challengeService.ts` (Conceptual):** Functions to fetch challenge set data based on an ID (from the hardcoded object/JSON/etc.).
+*   **`data/challenges.json` (Example):** A potential static file to hold the mapping of codes to challenge data.
+
+**7. Technical Considerations**
+-----------------------------
+
+*   **Challenge Data Persistence:** The primary challenge is how/where to store the mapping from `challengeId` to the `ChallengeSet` data. A static JSON file included in the build or hosted separately is the simplest starting point.
+*   **State During Challenge:** Need to manage state within a challenge set session (current problem index, attempts remaining, solved status).
+*   **DFA Generation Complexity:** Start with simple DFA generation rules.
+*   **Regex Validation:** Basic string comparison against `regexSolutions` is the most feasible approach initially.
+*   **Scalability:** This approach does *not* scale well. Adding many challenges requires updating the central data source. A proper backend/database would be needed for significant growth.
+
+**8. Potential Future Ideas (Simplified Scope)**
+------------------------------------------------
+
+*   **Improved DFA Generator:** More sophisticated random generation with better control over complexity.
+*   **Visual DFA Editing:** Allow manual creation/editing of DFAs via a graphical interface on the `/create` page.
+*   **More Config Options:** Time limits per problem, different validation modes.
+*   **Basic Analytics (Client-side):** Use `localStorage` to track simple metrics for the user's own reference (e.g., number of practice problems attempted).
+*   **NFA Support:** Add Non-deterministic Finite Automata practice. 
